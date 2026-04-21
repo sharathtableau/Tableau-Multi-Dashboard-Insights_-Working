@@ -1,0 +1,1864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableau Zone Debug Tool v1</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; min-height: 100vh; }
+
+  h1 { font-size: 15px; font-weight: 700; color: #1a1a2e; letter-spacing: 0.3px; }
+  h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #555; margin-bottom: 10px; }
+
+  /* ── Layout ── */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  .left-panel {
+    width: 300px; min-width: 260px; background: #fff;
+    border-right: 1px solid #e0e3e8;
+    display: flex; flex-direction: column; overflow-y: auto;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+  }
+  .panel-header {
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid #e8eaf0;
+    background: #fafbfd;
+  }
+  .panel-header .subtitle {
+    font-size: 11px; color: #888; margin-top: 2px;
+  }
+
+  .section { padding: 14px 18px; border-bottom: 1px solid #f0f2f5; }
+  .section:last-child { border-bottom: none; }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 2px dashed #c5cad5; border-radius: 8px;
+    padding: 20px 10px; text-align: center; cursor: pointer;
+    transition: all 0.2s; background: #fafbfd;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: #5b6af8; background: #f0f1ff;
+  }
+  .upload-zone input[type=file] { display: none; }
+  .upload-zone .icon { font-size: 28px; margin-bottom: 6px; display: block; }
+  .upload-zone .label { font-size: 13px; color: #555; font-weight: 500; }
+  .upload-zone .sub   { font-size: 11px; color: #aaa; margin-top: 3px; }
+  .upload-zone.has-file { border-color: #4caf50; background: #f0fff4; }
+  .upload-zone.has-file .label { color: #2e7d32; }
+
+  /* ── Controls ── */
+  label.field-label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  select, input[type=number] {
+    width: 100%; padding: 7px 10px; border: 1px solid #d0d4dc;
+    border-radius: 6px; font-size: 13px; color: #333;
+    background: #fff; outline: none; transition: border-color 0.15s;
+  }
+  select:focus, input[type=number]:focus { border-color: #5b6af8; }
+  select:disabled { background: #f5f5f5; color: #aaa; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 9px 16px; border-radius: 7px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; transition: all 0.15s; width: 100%;
+  }
+  .btn-primary { background: #5b6af8; color: #fff; }
+  .btn-primary:hover { background: #4a58e8; }
+  .btn-primary:disabled { background: #c0c5f5; cursor: default; }
+  .btn-ghost { background: #f0f2f5; color: #555; border: 1px solid #d5d8e0; }
+  .btn-ghost:hover { background: #e4e6f0; }
+  .btn-sm { padding: 5px 10px; font-size: 12px; width: auto; }
+
+  /* ── Sheet chips ── */
+  .sheet-list { display: flex; flex-direction: column; gap: 4px; }
+  .sheet-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 6px; font-size: 12px;
+    background: #f5f6fa; border-left: 3px solid #ccc; cursor: default;
+    transition: background 0.1s;
+  }
+  .sheet-chip .chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sheet-chip .chip-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-chip .chip-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 10px;
+    background: #e0e5f5; color: #4a58d8; font-weight: 600;
+  }
+  .sheet-chip.no-area { opacity: 0.5; }
+  .sheet-chip.matched { background: #eaf5ea; border-left-color: #4caf50 !important; }
+
+  /* ── Right panel ── */
+  .right-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .viz-header {
+    padding: 14px 20px 10px; border-bottom: 1px solid #e0e3e8;
+    background: #fff; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  }
+  .viz-header .match-badge {
+    font-size: 12px; padding: 4px 12px; border-radius: 20px;
+    background: #eaf5ea; color: #2e7d32; font-weight: 600;
+  }
+  .viz-header .design-info {
+    font-size: 11px; color: #888;
+  }
+
+  .viz-body { flex: 1; display: flex; overflow: hidden; }
+
+  .viz-canvas-wrap {
+    flex: 1; padding: 18px; overflow: auto; background: #f4f5f8;
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+  .viz-canvas-wrap svg { max-width: 100%; height: auto; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.1)); }
+
+  .viz-sidebar {
+    width: 320px; min-width: 280px; border-left: 1px solid #e0e3e8;
+    background: #fff; overflow-y: auto; display: flex; flex-direction: column;
+  }
+
+  /* ── Table ── */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .data-table th {
+    background: #f5f6fa; padding: 8px 10px; text-align: left;
+    font-weight: 700; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.5px; color: #666; border-bottom: 2px solid #e8eaf0;
+  }
+  .data-table td { padding: 7px 10px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+  .data-table tr:hover td { background: #f8f9fc; }
+  .data-table tr.highlight-row td { background: #eaf5ea; }
+  .data-table tr.highlight-row td:first-child { font-weight: 700; }
+
+  /* overlap score badge */
+  .score-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 700; min-width: 44px; text-align: center;
+  }
+  .score-high { background: #4caf50; color: #fff; }
+  .score-med  { background: #ff9800; color: #fff; }
+  .score-low  { background: #e0e0e0; color: #888; }
+  .score-zero { background: #eeeeee; color: #bbb; }
+
+  .coord-pill {
+    font-family: 'Courier New', monospace; font-size: 10px;
+    background: #f0f2f5; color: #444; padding: 2px 6px; border-radius: 4px;
+  }
+
+  /* ── Placeholder ── */
+  .placeholder {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: #aaa; text-align: center; gap: 10px; padding: 40px;
+  }
+  .placeholder .big-icon { font-size: 48px; }
+  .placeholder p { font-size: 14px; }
+
+  /* ── Error ── */
+  .error-msg { background: #fff0f0; border: 1px solid #ffc5c5; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #c62828; margin-top: 8px; }
+
+  /* ── Tabs ── */
+  .tab-row { display: flex; gap: 0; border-bottom: 1px solid #e0e3e8; }
+  .tab-btn { padding: 9px 14px; font-size: 12px; font-weight: 600; color: #888; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab-btn.active { color: #5b6af8; border-bottom-color: #5b6af8; }
+  .tab-content { display: none; padding: 12px; }
+  .tab-content.active { display: block; }
+
+  /* ── Worksheet fields ── */
+  .ws-fields { font-size: 11px; }
+  .ws-row { display: flex; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+  .field-pill { display: inline-flex; gap: 3px; align-items: center; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 500; }
+  .field-dim  { background: #e3f2fd; color: #1565c0; }
+  .field-meas { background: #fce4ec; color: #880e4f; }
+  .field-date { background: #f3e5f5; color: #6a1b9a; }
+  .field-label-tag { font-size: 9px; opacity: 0.7; text-transform: uppercase; }
+
+  /* ── Data table ── */
+  .data-preview-wrap { overflow: auto; max-height: 100%; font-size: 11px; }
+  .data-preview-table { border-collapse: collapse; white-space: nowrap; }
+  .data-preview-table th {
+    background: #1a1a2e; color: #e0e3ff; padding: 7px 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none;
+    border-right: 1px solid #2a2a4a;
+  }
+  .data-preview-table th:hover { background: #2d2d5a; }
+  .data-preview-table th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+  .data-preview-table th.sort-asc .sort-arrow::after { content: '▲'; opacity: 1; }
+  .data-preview-table th.sort-desc .sort-arrow::after { content: '▼'; opacity: 1; }
+  .data-preview-table td {
+    padding: 5px 10px; border-bottom: 1px solid #f0f2f5;
+    color: #333; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+    border-right: 1px solid #f5f6fa;
+  }
+  .data-preview-table tr:nth-child(even) td { background: #fafbfd; }
+  .data-preview-table tr:hover td { background: #e8f0fe; }
+  .cell-num { text-align: right; font-family: 'Courier New', monospace; color: #1565c0; }
+  .cell-null { color: #ccc; font-style: italic; }
+  .data-toolbar {
+    padding: 8px 12px; background: #f5f6fa; border-bottom: 1px solid #e0e3e8;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+  }
+  .data-info { font-size: 11px; color: #666; flex: 1; }
+  .btn-dl { padding: 4px 10px; font-size: 11px; background: #4caf50; color: #fff;
+            border: none; border-radius: 5px; cursor: pointer; font-weight: 600; }
+  .btn-dl:hover { background: #388e3c; }
+
+  /* ── Filter banners & badges ── */
+  .layout-warning {
+    background: #fff3e0; border-left: 4px solid #ff9800;
+    padding: 8px 12px; font-size: 11px; color: #5d4037;
+    line-height: 1.5; flex-shrink: 0;
+  }
+  .filter-banner {
+    background: #e8f5e9; border-bottom: 1px solid #c8e6c9;
+    padding: 6px 12px; font-size: 11px; display: flex;
+    flex-wrap: wrap; gap: 5px; align-items: center; flex-shrink: 0;
+  }
+  .filter-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 600; white-space: nowrap;
+  }
+  .cat-badge  { background: #e3f2fd; color: #0d47a1; border: 1px solid #90caf9; }
+  .date-badge { background: #f3e5f5; color: #4a148c; border: 1px solid #ce93d8; }
+  .topn-badge { background: #fff8e1; color: #e65100; border: 1px solid #ffcc02; }
+  .badge-warn { background: #ffebee; color: #b71c1c; border: 1px solid #ef9a9a; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #f0f2f5; }
+  ::-webkit-scrollbar-thumb { background: #c0c5d0; border-radius: 10px; }
+
+  .spinner {
+    width: 20px; height: 20px; border: 2px solid #e0e3e8;
+    border-top-color: #5b6af8; border-radius: 50%; animation: spin 0.7s linear infinite;
+    margin: 0 auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot-green { background: #4caf50; }
+  .dot-gray  { background: #bbb; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════ LEFT PANEL ═══════════════ -->
+  <div class="left-panel">
+    <div class="panel-header">
+      <h1>🔬 Zone Debug Tool <span style="font-size:10px;font-weight:400;color:#aaa;">v1</span></h1>
+      <div class="subtitle">Tableau .twb / .twbx workbook inspector</div>
+    </div>
+
+    <!-- File Upload -->
+    <div class="section">
+      <h2>1. Upload Workbook</h2>
+      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+        <input type="file" id="fileInput" accept=".twb,.twbx" onchange="handleFileUpload(event)">
+        <span class="icon">📁</span>
+        <div class="label" id="uploadLabel">Click or drag .twb / .twbx</div>
+        <div class="sub">Tableau workbook or packaged workbook</div>
+      </div>
+      <div id="fileError" class="error-msg" style="display:none;"></div>
+    </div>
+
+    <!-- Dashboard Selector -->
+    <div class="section">
+      <h2>2. Select Dashboard</h2>
+      <label class="field-label">Dashboard</label>
+      <select id="dashSelect" disabled onchange="onDashboardChange()">
+        <option value="">— select a dashboard —</option>
+      </select>
+      <div id="designInfo" style="font-size:11px;color:#888;margin-top:6px;display:none;">
+        Design: <span id="designSize"></span> px &nbsp;·&nbsp;
+        <span id="zoneCount"></span> zones
+      </div>
+    </div>
+
+    <!-- Sheets in Dashboard -->
+    <div class="section">
+      <h2>3. Dashboard Sheets</h2>
+      <div id="sheetList" class="sheet-list">
+        <div style="font-size:12px;color:#bbb;">Select a dashboard to see sheets</div>
+      </div>
+    </div>
+
+    <!-- Crop Simulation -->
+    <div class="section">
+      <h2>4. Crop Simulation</h2>
+
+      <!-- Image size — fetched directly from XML <size> element -->
+      <div style="background:#f8f9fc;border:1px solid #e4e6f0;border-radius:7px;padding:9px 10px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="font-size:10px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Image size</span>
+          <span id="xmlTag" style="font-size:10px;padding:2px 7px;border-radius:8px;background:#e3f2fd;color:#1565c0;font-weight:600;display:none;">📄 from XML</span>
+        </div>
+        <div id="xmlSizeNote" style="font-size:11px;color:#aaa;margin-bottom:7px;">Select a dashboard — size is read from &lt;size&gt; in XML</div>
+        <div class="grid-2">
+          <div>
+            <label class="field-label">IMG Width (px)</label>
+            <input type="number" id="imgW" value="" min="1" placeholder="—" oninput="onImgManual()">
+          </div>
+          <div>
+            <label class="field-label">IMG Height (px)</label>
+            <input type="number" id="imgH" value="" min="1" placeholder="—" oninput="onImgManual()">
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="resetXmlBtn" onclick="setImgSizeFromXml()" style="margin-top:7px;width:100%;font-size:11px;display:none;">
+          ↺ Reset to XML size
+        </button>
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <label class="field-label">Y-Offset (trimmed top px)</label>
+        <input type="number" id="yOffset" value="0" min="0" title="Pixels trimmed from top (use 0 if image is already trimmed)">
+        <div style="font-size:10px;color:#aaa;margin-top:2px;">Leave 0 if your PNG is already trimmed to dashboard content</div>
+      </div>
+      <div class="grid-4" style="margin-bottom:10px;">
+        <div><label class="field-label">Crop X</label><input type="number" id="cropX" value="0" min="0"></div>
+        <div><label class="field-label">Crop Y</label><input type="number" id="cropY" value="0" min="0"></div>
+        <div><label class="field-label">Crop W</label><input type="number" id="cropW" value="800" min="1"></div>
+        <div><label class="field-label">Crop H</label><input type="number" id="cropH" value="400" min="1"></div>
+      </div>
+      <button class="btn btn-primary" id="testBtn" onclick="testMapping()" disabled>
+        🎯 Test Mapping
+      </button>
+      <div id="matchResult" style="margin-top:8px;font-size:12px;display:none;"></div>
+
+      <!-- Download from Tableau Server — visible after a match is found -->
+      <div id="querySection" style="margin-top:10px;display:none;">
+        <div style="margin-bottom:6px;">
+          <label class="field-label">Tableau Workbook Name</label>
+          <input type="text" id="tableauWorkbookName" placeholder="Exact name on Tableau Server"
+            style="width:100%;box-sizing:border-box;font-size:11px;padding:5px 8px;
+                   border:1px solid #ccd;border-radius:5px;background:#f9f9ff;"
+            title="The workbook name exactly as it appears in Tableau Server / Tableau Online">
+          <div style="font-size:10px;color:#aaa;margin-top:2px;">
+            Must match the name shown in Tableau Server (not the filename)
+          </div>
+        </div>
+        <button class="btn btn-primary" id="queryBtn" onclick="queryTableauData()"
+          style="background:#2baf8f;width:100%;">
+          ⬇ Download from Tableau
+        </button>
+        <div id="queryStatus" style="margin-top:6px;font-size:11px;color:#666;display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ RIGHT PANEL ═══════════════ -->
+  <div class="right-panel">
+    <div class="viz-header">
+      <div>
+        <h1>Spatial Visualization <span style="font-weight:400;color:#aaa;font-size:12px;">(0 – 100,000 units)</span></h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span class="design-info" id="headerDesignInfo"></span>
+        <span class="match-badge" id="matchBadge" style="display:none;"></span>
+      </div>
+    </div>
+
+    <div class="viz-body">
+      <!-- SVG Canvas -->
+      <div class="viz-canvas-wrap" id="canvasWrap">
+        <div class="placeholder" id="placeholderMsg">
+          <span class="big-icon">🗺️</span>
+          <p>Upload a workbook and select a dashboard<br>to see the spatial zone layout</p>
+        </div>
+        <div id="svgContainer" style="display:none;"></div>
+      </div>
+
+      <!-- Sidebar: Table + Worksheet Details -->
+      <div class="viz-sidebar">
+        <div class="tab-row">
+          <button class="tab-btn active" id="tabbtn-zones"       onclick="switchTab('zones')">Zone Map</button>
+          <button class="tab-btn"        id="tabbtn-detail"      onclick="switchTab('detail')" style="display:none;">📋 Sheet Detail</button>
+          <button class="tab-btn"        id="tabbtn-data"        onclick="switchTab('data')" style="display:none;">📊 Data</button>
+          <button class="tab-btn"        id="tabbtn-worksheets"  onclick="switchTab('worksheets')">All Worksheets</button>
+          <button class="tab-btn"        id="tabbtn-raw"         onclick="switchTab('raw')">XML Stats</button>
+        </div>
+
+        <!-- Zones Tab -->
+        <div class="tab-content active" id="tab-zones">
+          <div id="zonesTableWrap">
+            <div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">Select a dashboard first</div>
+          </div>
+        </div>
+
+        <!-- Sheet Detail Tab (shown after Test Mapping) -->
+        <div class="tab-content" id="tab-detail">
+          <div id="sheetDetailWrap">
+            <div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">Run Test Mapping to see matched sheet detail</div>
+          </div>
+        </div>
+
+        <!-- Data Tab (Hyper query result) -->
+        <div class="tab-content" id="tab-data">
+          <div id="dataTabWrap">
+            <div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">
+              Run Test Mapping, then click <strong>Query Hyper Data</strong> to load the actual data
+            </div>
+          </div>
+        </div>
+
+        <!-- All Worksheets Tab -->
+        <div class="tab-content" id="tab-worksheets">
+          <div id="wsListWrap">
+            <div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">Upload a workbook first</div>
+          </div>
+        </div>
+
+        <!-- XML Stats Tab -->
+        <div class="tab-content" id="tab-raw">
+          <div id="xmlStatsWrap">
+            <div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">Upload a workbook first</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────
+let parsedDoc    = null;
+let allDashboards  = [];
+let allWorksheets  = [];
+let currentDash  = null;
+let lastCropRect = null;
+let lastScores   = {};
+let uploadedFile  = null;      // raw File object — needed for the /api/debug/sheet-data POST
+let lastBestSheet = null;      // sheet name from most recent Test Mapping run
+
+// API base: works whether opened from Flask (/debug) or directly as file://
+const API_BASE = (window.location.protocol === 'file:')
+  ? 'http://localhost:5002'
+  : window.location.origin;
+
+const ZONE_COLORS = [
+  '#4e85f4','#e97b3a','#2baf8f','#d4526a','#7c5cbf',
+  '#3daed4','#e8c13a','#5a9e57','#c95ab5','#6891d5',
+  '#f47a60','#439fa8','#b8a63a','#8068c9','#55aa77'
+];
+
+// ─────────────────────────────────────────────────────────────
+// Tab switching
+// ─────────────────────────────────────────────────────────────
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    // Each tab button has id="tabbtn-{id}"
+    const btnId = b.id.replace('tabbtn-', '');
+    b.classList.toggle('active', btnId === id);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => {
+    c.classList.toggle('active', c.id === 'tab-'+id);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// File handling
+// ─────────────────────────────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+uploadZone.addEventListener('dragover',  e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', ()  => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) processFile(f);
+});
+
+async function handleFileUpload(evt) {
+  const f = evt.target.files[0];
+  if (f) processFile(f);
+}
+
+async function processFile(file) {
+  uploadedFile = file;
+  lastBestSheet = null;
+  // Auto-fill workbook name from filename (strip .twb / .twbx extension)
+  const wbInput = document.getElementById('tableauWorkbookName');
+  if (wbInput && !wbInput.value) {
+    wbInput.value = file.name.replace(/\.(twbx?|TWBX?)$/, '');
+  }
+  const errEl = document.getElementById('fileError');
+  errEl.style.display = 'none';
+  uploadZone.classList.remove('has-file');
+  document.getElementById('uploadLabel').textContent = '⏳ Parsing…';
+
+  try {
+    parsedDoc = await loadWorkbook(file);
+    allDashboards = parseDashboards(parsedDoc);
+    allWorksheets = parseWorksheets(parsedDoc);
+
+    document.getElementById('uploadLabel').textContent = `✓ ${file.name}`;
+    uploadZone.classList.add('has-file');
+
+    populateDashSelect();
+    renderWorksheetList();
+    renderXmlStats(file.name);
+  } catch(e) {
+    document.getElementById('uploadLabel').textContent = 'Click or drag .twb / .twbx';
+    errEl.textContent = '❌ ' + e.message;
+    errEl.style.display = 'block';
+    console.error(e);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Workbook parser (handles .twb and .twbx)
+// ─────────────────────────────────────────────────────────────
+async function loadWorkbook(file) {
+  let xmlText;
+  const lname = file.name.toLowerCase();
+
+  if (lname.endsWith('.twbx')) {
+    if (typeof JSZip === 'undefined') throw new Error('JSZip library not loaded — cannot parse .twbx');
+    const zip = await JSZip.loadAsync(file);
+    let twbEntry = null;
+    zip.forEach((rel, entry) => { if (rel.endsWith('.twb') && !twbEntry) twbEntry = entry; });
+    if (!twbEntry) throw new Error('No .twb file found inside the .twbx archive');
+    xmlText = await twbEntry.async('string');
+  } else if (lname.endsWith('.twb')) {
+    xmlText = await file.text();
+  } else {
+    throw new Error('Unsupported file type. Please upload a .twb or .twbx file.');
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  const err = doc.querySelector('parsererror');
+  if (err) throw new Error('XML parse error — is this a valid Tableau workbook?');
+  return doc;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dashboard parser
+// ─────────────────────────────────────────────────────────────
+function parseDashboards(doc) {
+  const result = [];
+  doc.querySelectorAll('dashboard').forEach(dash => {
+    const name = dash.getAttribute('name');
+    if (!name) return;
+
+    // Design dimensions
+    const sizeEl = dash.querySelector('size');
+    const designW = parseInt(sizeEl?.getAttribute('maxwidth')  || '1000') || 1000;
+    const designH = parseInt(sizeEl?.getAttribute('maxheight') || '800')  || 800;
+
+    // Collect ALL zones recursively
+    const zones = [];
+    const seen  = new Set();
+    dash.querySelectorAll('zone').forEach(zone => {
+      const sheetName = zone.getAttribute('name');
+      if (!sheetName) return;                    // layout containers have no name
+      const x = parseInt(zone.getAttribute('x') || '0');
+      const y = parseInt(zone.getAttribute('y') || '0');
+      const w = parseInt(zone.getAttribute('w') || '0');
+      const h = parseInt(zone.getAttribute('h') || '0');
+      const key = `${sheetName}||${x}||${y}||${w}||${h}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        zones.push({ sheetName, x, y, w, h, hasArea: w > 0 && h > 0, type: zone.getAttribute('type') || '' });
+      }
+    });
+
+    result.push({ name, designW, designH, zones });
+  });
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Worksheet parser
+// ─────────────────────────────────────────────────────────────
+function parseWorksheets(doc) {
+  const sheets = [];
+
+  // Field catalog from datasources
+  const catalog = {};
+  doc.querySelectorAll('datasource').forEach(ds => {
+    Array.from(ds.children).forEach(col => {
+      if (col.tagName !== 'column') return;
+      const name    = col.getAttribute('name') || '';
+      const caption = col.getAttribute('caption') || name.replace(/^\[|\]$/g,'');
+      const role    = col.getAttribute('role')    || '';
+      const dtype   = col.getAttribute('datatype')|| '';
+      if (name) {
+        const key = name.replace(/^\[|\]$/g,'').toUpperCase().replace(/ /g,'_');
+        catalog[key] = { caption, role, dtype };
+      }
+    });
+  });
+
+  doc.querySelectorAll('worksheet').forEach(ws => {
+    const name = ws.getAttribute('name');
+    if (!name) return;
+
+    const extractFields = (text, shelf) => {
+      if (!text) return [];
+      const tokens = (text.match(/\[[^\]]+\]/g) || []);
+      const out = [];
+      tokens.forEach(t => {
+        if (t.includes('federated')) return;
+        if (['[Measure Names]','[Measure Values]','[Number of Records]'].includes(t)) return;
+        const inner = t.slice(1,-1);
+        const parts = inner.split(':');
+        let agg = 'none', field = inner;
+        if (parts.length >= 3) { agg = parts[0].toLowerCase(); field = parts[1]; }
+        else if (parts.length === 2) { agg = parts[0].toLowerCase(); field = parts[1]; }
+        const fieldKey = field.toUpperCase().replace(/ /g,'_');
+        const caption  = catalog[fieldKey]?.caption || field;
+        const role     = catalog[fieldKey]?.role     || (agg==='none' ? 'dimension' : 'measure');
+        out.push({ agg, field, caption, role, shelf });
+      });
+      return out;
+    };
+
+    const rowsText = ws.querySelector('rows')?.textContent || '';
+    const colsText = ws.querySelector('cols')?.textContent || '';
+    const rowFields = extractFields(rowsText, 'rows');
+    const colFields = extractFields(colsText, 'cols');
+
+    // Count filters
+    let filterCount = 0;
+    ws.querySelectorAll('filter').forEach(() => filterCount++);
+
+    sheets.push({ name, rowFields, colFields, filterCount });
+  });
+  return sheets;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Populate dashboard dropdown
+// ─────────────────────────────────────────────────────────────
+function populateDashSelect() {
+  const sel = document.getElementById('dashSelect');
+  sel.innerHTML = '<option value="">— select a dashboard —</option>';
+  allDashboards.forEach((d, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = d.name;
+    sel.appendChild(opt);
+  });
+  sel.disabled = allDashboards.length === 0;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Dashboard change
+// ─────────────────────────────────────────────────────────────
+function onDashboardChange() {
+  const idx = document.getElementById('dashSelect').value;
+  if (idx === '') { currentDash = null; clearViz(); return; }
+  currentDash = allDashboards[parseInt(idx)];
+  lastCropRect = null;
+  lastScores   = {};
+  document.getElementById('matchBadge').style.display  = 'none';
+  document.getElementById('matchResult').style.display = 'none';
+  setImgSizeFromXml();   // populate IMG W/H directly from XML <size> element
+  renderAll();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Populate IMG W/H from the XML <size maxwidth="…" maxheight="…"> element.
+// No calculations — these ARE the dashboard design pixel dimensions.
+// ─────────────────────────────────────────────────────────────
+function setImgSizeFromXml() {
+  if (!currentDash) return;
+  const w = currentDash.designW;
+  const h = currentDash.designH;
+  document.getElementById('imgW').value = w;
+  document.getElementById('imgH').value = h;
+  document.getElementById('xmlTag').style.display      = 'inline-block';
+  document.getElementById('resetXmlBtn').style.display = 'block';
+  document.getElementById('xmlSizeNote').innerHTML =
+    `<span style="color:#4caf50;font-weight:700;">✓</span> ` +
+    `Read from XML <code style="background:#e8f5e9;padding:1px 5px;border-radius:3px;">&lt;size maxwidth="${w}" maxheight="${h}"/&gt;</code>`;
+}
+
+function onImgManual() {
+  // User overrode — switch note to "custom"
+  document.getElementById('xmlTag').style.display      = 'none';
+  document.getElementById('resetXmlBtn').style.display = 'block';
+  const w = document.getElementById('imgW').value;
+  const h = document.getElementById('imgH').value;
+  document.getElementById('xmlSizeNote').innerHTML =
+    `<span style="color:#ff9800;font-weight:700;">✎</span> ` +
+    `Custom value — click Reset to restore XML size`;
+}
+
+function clearViz() {
+  document.getElementById('placeholderMsg').style.display = 'flex';
+  document.getElementById('svgContainer').style.display   = 'none';
+  document.getElementById('sheetList').innerHTML          = '<div style="font-size:12px;color:#bbb;">Select a dashboard to see sheets</div>';
+  document.getElementById('zonesTableWrap').innerHTML     = '<div style="font-size:12px;color:#bbb;padding:20px;text-align:center;">Select a dashboard first</div>';
+  document.getElementById('headerDesignInfo').textContent = '';
+  document.getElementById('designInfo').style.display     = 'none';
+  document.getElementById('testBtn').disabled             = true;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Render everything for current dashboard
+// ─────────────────────────────────────────────────────────────
+function renderAll() {
+  if (!currentDash) return;
+  renderSheetChips();
+  renderSvg();
+  renderZonesTable();
+  // Show design info (dimensions come directly from XML)
+  const di = document.getElementById('designInfo');
+  di.style.display = 'block';
+  document.getElementById('designSize').textContent = `${currentDash.designW}×${currentDash.designH}`;
+  document.getElementById('zoneCount').textContent  = `${currentDash.zones.length}`;
+  document.getElementById('headerDesignInfo').innerHTML =
+    `XML size: <strong>${currentDash.designW}×${currentDash.designH}</strong> px &nbsp;·&nbsp; ` +
+    `${currentDash.zones.length} zones`;
+  document.getElementById('testBtn').disabled = false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sheet chips (left panel)
+// ─────────────────────────────────────────────────────────────
+function renderSheetChips() {
+  const el = document.getElementById('sheetList');
+  if (!currentDash.zones.length) {
+    el.innerHTML = '<div style="font-size:12px;color:#bbb;">No zones found in this dashboard</div>';
+    return;
+  }
+  el.innerHTML = currentDash.zones.map((z, i) => {
+    const color   = ZONE_COLORS[i % ZONE_COLORS.length];
+    const matched = lastScores[z.sheetName] > 0.5;
+    return `<div class="sheet-chip ${!z.hasArea ? 'no-area':''} ${matched ? 'matched':''}" style="border-left-color:${color};">
+      <span class="chip-dot" style="background:${color};"></span>
+      <span class="chip-name" title="${z.sheetName}">${z.sheetName}</span>
+      ${z.hasArea
+        ? `<span class="chip-badge">${(z.w/1000).toFixed(0)}k×${(z.h/1000).toFixed(0)}k</span>`
+        : `<span class="chip-badge" style="background:#f5e5e5;color:#c62828;">hidden</span>`}
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────────────────────
+// SVG spatial visualization
+// ─────────────────────────────────────────────────────────────
+function renderSvg() {
+  const canvasW = 820, canvasH = 580;
+  const pad     = 24;
+  const vizW    = canvasW - 2*pad;
+  const vizH    = canvasH - 2*pad;
+
+  const scaleX = vizW / 100000;
+  const scaleY = vizH / 100000;
+  const tx = u => pad + u * scaleX;
+  const ty = u => pad + u * scaleY;
+  const tw = u => u * scaleX;
+  const th = u => u * scaleY;
+
+  let svg = `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg" style="border-radius:8px;background:#fff;">`;
+
+  // Background
+  svg += `<rect width="${canvasW}" height="${canvasH}" fill="#fff" rx="8"/>`;
+
+  // Grid lines (light)
+  for (let g = 0; g <= 100000; g += 25000) {
+    const gx = tx(g), gy = ty(g);
+    svg += `<line x1="${gx}" y1="${pad}" x2="${gx}" y2="${pad+vizH}" stroke="#e8eaf0" stroke-width="0.5"/>`;
+    svg += `<line x1="${pad}" y1="${gy}" x2="${pad+vizW}" y2="${gy}" stroke="#e8eaf0" stroke-width="0.5"/>`;
+  }
+
+  // Grid labels
+  for (let g = 0; g <= 100000; g += 25000) {
+    if (g === 0) continue;
+    const gx = tx(g), gy = ty(g);
+    svg += `<text x="${gx}" y="${pad-5}" text-anchor="middle" fill="#bbb" font-size="9" font-family="sans-serif">${g/1000}k</text>`;
+    svg += `<text x="${pad-3}" y="${gy+3}" text-anchor="end" fill="#bbb" font-size="9" font-family="sans-serif">${g/1000}k</text>`;
+  }
+
+  // Dashboard border
+  svg += `<rect x="${pad}" y="${pad}" width="${vizW}" height="${vizH}" fill="none" stroke="#c8ccd8" stroke-width="1.5" stroke-dasharray="6,4" rx="2"/>`;
+
+  // Zone rectangles (only those with area)
+  const drawZones = currentDash.zones.filter(z => z.hasArea);
+  drawZones.forEach((z, i) => {
+    const color  = ZONE_COLORS[i % ZONE_COLORS.length];
+    const sx = tx(z.x), sy = ty(z.y), sw = tw(z.w), sh = th(z.h);
+    const score  = lastScores[z.sheetName] || 0;
+    const alpha  = score > 0.5 ? 0.55 : 0.22;
+    const strokeW= score > 0.5 ? 2.5 : 1.2;
+
+    svg += `<rect x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh.toFixed(1)}"
+      fill="${color}" fill-opacity="${alpha}" stroke="${color}" stroke-width="${strokeW}" rx="2"/>`;
+
+    // Label — only if zone is big enough
+    if (sw > 40 && sh > 18) {
+      const lx = sx + 5, ly = sy + 14;
+      svg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${color}" font-size="11"
+        font-weight="700" font-family="-apple-system,BlinkMacSystemFont,sans-serif"
+        style="pointer-events:none;">${escSvg(z.sheetName)}</text>`;
+    }
+  });
+
+  // Crop rectangle overlay
+  if (lastCropRect) {
+    const { cx, cy, cw, ch } = lastCropRect;
+    const sx = tx(cx), sy = ty(cy), sw = tw(cw), sh = th(ch);
+    svg += `<rect x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh.toFixed(1)}"
+      fill="rgba(220,50,50,0.08)" stroke="#e53935" stroke-width="2" stroke-dasharray="7,4" rx="2"/>`;
+    svg += `<text x="${(sx+5).toFixed(1)}" y="${(sy+14).toFixed(1)}" fill="#e53935" font-size="10"
+      font-weight="700" font-family="sans-serif">CROP</text>`;
+  }
+
+  svg += '</svg>';
+
+  document.getElementById('placeholderMsg').style.display = 'none';
+  const wrap = document.getElementById('svgContainer');
+  wrap.innerHTML = svg;
+  wrap.style.display = 'block';
+}
+
+// ─────────────────────────────────────────────────────────────
+// Zones detail table (right sidebar)
+// ─────────────────────────────────────────────────────────────
+function renderZonesTable() {
+  if (!currentDash) return;
+  const zones = currentDash.zones;
+  if (!zones.length) {
+    document.getElementById('zonesTableWrap').innerHTML = '<div style="padding:20px;text-align:center;color:#bbb;font-size:12px;">No zones in this dashboard</div>';
+    return;
+  }
+
+  let html = `<table class="data-table">
+    <thead><tr>
+      <th>Worksheet</th>
+      <th>Overlap</th>
+      <th>Units (X,Y,W,H)</th>
+    </tr></thead><tbody>`;
+
+  // Sort by score desc, then by area desc
+  const scoresAvailable = Object.keys(lastScores).length > 0;
+  const sorted = [...zones]
+    .filter(z => !scoresAvailable || (lastScores[z.sheetName] || 0) > 0.5)
+    .sort((a,b) => {
+      const sa = lastScores[a.sheetName] || 0;
+      const sb = lastScores[b.sheetName] || 0;
+      if (sb !== sa) return sb - sa;
+      return (b.w*b.h) - (a.w*a.h);
+    });
+
+  sorted.forEach((z, i) => {
+    const color  = ZONE_COLORS[currentDash.zones.indexOf(z) % ZONE_COLORS.length];
+    const score  = lastScores[z.sheetName];
+    const hasScore = score !== undefined;
+    const pct    = hasScore ? (score*100).toFixed(1)+'%' : '—';
+    const badgeCls = !hasScore ? '' : score > 0.5 ? 'score-high' : 'score-zero';
+    const rowCls = (score||0) > 0.5 ? 'highlight-row' : '';
+
+    const dot = `<span class="status-dot" style="background:${color};margin-right:5px;"></span>`;
+    const coordStr = z.hasArea
+      ? `<span class="coord-pill">${z.x}, ${z.y}, ${z.w}, ${z.h}</span>`
+      : `<span style="color:#bbb;font-size:11px;">hidden (w=${z.w} h=${z.h})</span>`;
+    const badge = hasScore
+      ? `<span class="score-badge ${badgeCls}">${pct}</span>`
+      : `<span style="color:#ccc;font-size:11px;">—</span>`;
+
+    html += `<tr class="${rowCls}">
+      <td>${dot}${escHtml(z.sheetName)}</td>
+      <td>${badge}</td>
+      <td>${coordStr}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  document.getElementById('zonesTableWrap').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// All worksheets list
+// ─────────────────────────────────────────────────────────────
+function renderWorksheetList() {
+  if (!allWorksheets.length) {
+    document.getElementById('wsListWrap').innerHTML = '<div style="padding:20px;text-align:center;color:#bbb;font-size:12px;">No worksheets parsed</div>';
+    return;
+  }
+
+  const AGG_FUNCS = new Set(['sum','avg','cnt','cntd','max','min']);
+
+  let html = `<div style="font-size:11px;color:#888;padding:8px 12px 4px;font-weight:600;">${allWorksheets.length} WORKSHEETS</div>`;
+
+  allWorksheets.forEach(ws => {
+    const allFields = [...ws.rowFields, ...ws.colFields];
+    const dims  = allFields.filter(f => !AGG_FUNCS.has(f.agg) && f.field);
+    const meas  = allFields.filter(f => AGG_FUNCS.has(f.agg) && f.field);
+
+    const dimPills  = dims.map(f =>
+      `<span class="field-pill field-dim" title="${f.shelf} shelf: ${f.agg}(${f.field})">
+        <span class="field-label-tag">${f.shelf==='rows'?'R':'C'}</span> ${escHtml(f.caption||f.field)}
+      </span>`).join('');
+    const measPills = meas.map(f =>
+      `<span class="field-pill field-meas" title="${f.shelf} shelf: ${f.agg}(${f.field})">
+        <span class="field-label-tag">${f.agg.toUpperCase()}</span> ${escHtml(f.caption||f.field)}
+      </span>`).join('');
+
+    const filterBadge = ws.filterCount > 0
+      ? `<span style="font-size:10px;background:#fff3e0;color:#e65100;padding:1px 6px;border-radius:8px;font-weight:600;">${ws.filterCount} filters</span>`
+      : '';
+
+    html += `<div style="padding:8px 12px;border-bottom:1px solid #f0f2f5;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+        <span style="font-size:12px;font-weight:600;color:#333;">${escHtml(ws.name)}</span>
+        ${filterBadge}
+      </div>
+      <div class="ws-fields">
+        ${dimPills || measPills
+          ? `<div class="ws-row">${dimPills}${measPills}</div>`
+          : `<span style="color:#bbb;font-size:11px;">no field references found in rows/cols</span>`}
+      </div>
+    </div>`;
+  });
+
+  document.getElementById('wsListWrap').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// XML Stats panel
+// ─────────────────────────────────────────────────────────────
+function renderXmlStats(filename) {
+  if (!parsedDoc) return;
+
+  const datasources = parsedDoc.querySelectorAll('datasource');
+  const dsNames = [...datasources].map(d => d.getAttribute('caption') || d.getAttribute('name') || '(unnamed)').filter(Boolean);
+
+  const allConns  = [...parsedDoc.querySelectorAll('connection')];
+  const hypers    = allConns.filter(c => c.getAttribute('class') === 'hyper');
+  const liveConns = allConns.filter(c => {
+    const cls = c.getAttribute('class') || '';
+    return cls && cls !== 'hyper' && cls !== 'federated' && cls !== 'new-connection-main';
+  });
+
+  const totalColumns = parsedDoc.querySelectorAll('datasource > column').length;
+  const calcFields   = parsedDoc.querySelectorAll('datasource > column > calculation').length;
+  const filters      = parsedDoc.querySelectorAll('filter').length;
+  const parameters   = [...parsedDoc.querySelectorAll('column')].filter(c => c.closest('datasource')?.getAttribute('name') === 'Parameters').length;
+
+  const statRow = (label, val, color='#333') =>
+    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f5f5f5;font-size:12px;">
+      <span style="color:#666;">${label}</span>
+      <span style="font-weight:700;color:${color};">${val}</span>
+    </div>`;
+
+  let html = `<div style="padding:10px 12px;">
+    <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Workbook</div>
+    ${statRow('File', escHtml(filename))}
+    ${statRow('Dashboards',  allDashboards.length, '#5b6af8')}
+    ${statRow('Worksheets',  allWorksheets.length, '#5b6af8')}
+    ${statRow('Datasources', datasources.length)}
+    ${statRow('Total columns', totalColumns)}
+    ${statRow('Calc. fields', calcFields)}
+    ${statRow('Total filters', filters)}
+
+    <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 8px;">Datasources</div>
+    ${dsNames.length
+      ? dsNames.map(n => `<div style="padding:4px 0;font-size:12px;border-bottom:1px solid #f5f5f5;">${escHtml(n)}</div>`).join('')
+      : '<div style="color:#bbb;font-size:12px;">none</div>'}
+
+    <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 8px;">Connection type</div>
+    ${statRow('Hyper (extract)', hypers.length > 0 ? '✅ Yes' : 'No', hypers.length ? '#4caf50' : '#888')}
+    ${statRow('Live connections', liveConns.length || 'None')}
+
+    <div style="font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 8px;">Dashboards</div>
+    ${allDashboards.map(d =>
+      `<div style="padding:5px 0;border-bottom:1px solid #f5f5f5;font-size:12px;">
+        <span style="font-weight:600;">${escHtml(d.name)}</span>
+        <span style="color:#888;margin-left:6px;">${d.designW}×${d.designH}px</span>
+        <span style="color:#5b6af8;margin-left:6px;">${d.zones.length} zones</span>
+        <span style="color:#4caf50;margin-left:6px;">(${d.zones.filter(z=>z.hasArea).length} visible)</span>
+      </div>`
+    ).join('')}
+  </div>`;
+
+  document.getElementById('xmlStatsWrap').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Crop simulation / test mapping
+// ─────────────────────────────────────────────────────────────
+function testMapping() {
+  if (!currentDash) return;
+
+  const imgW    = parseFloat(document.getElementById('imgW').value)    || 1700;
+  const imgH    = parseFloat(document.getElementById('imgH').value)    || 1360;
+  const yOffset = parseFloat(document.getElementById('yOffset').value) || 0;
+  const cropX   = parseFloat(document.getElementById('cropX').value)   || 0;
+  const cropY   = parseFloat(document.getElementById('cropY').value)   || 0;
+  const cropW   = parseFloat(document.getElementById('cropW').value)   || 100;
+  const cropH   = parseFloat(document.getElementById('cropH').value)   || 100;
+
+  // The content area in the image starts at yOffset and goes to imgH
+  const contentH = imgH - yOffset;
+
+  // Map pixel → 0-100,000 unit space
+  const xRatio = 100000.0 / imgW;
+  const yRatio = 100000.0 / contentH;
+
+  const cx = cropX * xRatio;
+  const cy = (cropY - yOffset) * yRatio;
+  const cw = cropW * xRatio;
+  const ch = cropH * yRatio;
+
+  // Clamp to valid range
+  const cx2 = Math.max(0, cx), cy2 = Math.max(0, cy);
+  const cw2 = cw, ch2 = ch;
+
+  lastCropRect = { cx: cx2, cy: cy2, cw: cw2, ch: ch2 };
+
+  // Compute overlap scores — measured as fraction of EACH ZONE covered by the crop
+  // (not fraction of crop filled by the zone). This means a small floating sheet
+  // that is fully inside the crop scores 100%, same as a large background sheet.
+  lastScores = {};
+
+  currentDash.zones.filter(z => z.hasArea).forEach(z => {
+    const overlapX1 = Math.max(cx2, z.x);
+    const overlapY1 = Math.max(cy2, z.y);
+    const overlapX2 = Math.min(cx2 + cw2, z.x + z.w);
+    const overlapY2 = Math.min(cy2 + ch2, z.y + z.h);
+    const ow = overlapX2 - overlapX1;
+    const oh = overlapY2 - overlapY1;
+    if (ow > 0 && oh > 0) {
+      const zoneArea = (z.w * z.h) || 1;
+      lastScores[z.sheetName] = Math.min((ow * oh) / zoneArea, 1.0);
+    } else {
+      lastScores[z.sheetName] = 0;
+    }
+  });
+
+  // Best match = highest-scoring zone (may tie at 100% for overlapping/floating sheets)
+  let bestSheet = null, bestScore = 0;
+  Object.entries(lastScores).forEach(([sheet, score]) => {
+    if (score > bestScore) { bestScore = score; bestSheet = sheet; }
+  });
+
+  // All matched sheets (score > 50%)
+  const allMatched = Object.entries(lastScores)
+    .filter(([, s]) => s > 0.5)
+    .sort((a, b) => b[1] - a[1]);
+
+  // Update badge — show all matched sheets
+  const badge = document.getElementById('matchBadge');
+  if (allMatched.length > 0) {
+    badge.textContent = allMatched.length === 1
+      ? `Match: ${allMatched[0][0]}`
+      : `Match: ${allMatched.map(([n]) => n).join(' + ')}`;
+    badge.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
+  }
+
+  // Match result text — list all matched sheets individually
+  const res = document.getElementById('matchResult');
+  if (allMatched.length > 0) {
+    const lines = allMatched.map(([name, score]) =>
+      `<span style="color:#2e7d32;font-weight:600;">✓ "${name}" — ${(score*100).toFixed(1)}% of zone covered</span>`
+    ).join('<br>');
+    res.innerHTML = lines +
+      `<br><span style="color:#666;font-size:11px;">Crop in units: X=${cx2.toFixed(0)}, Y=${cy2.toFixed(0)}, W=${cw2.toFixed(0)}, H=${ch2.toFixed(0)}</span>`;
+    res.style.display = 'block';
+  } else {
+    res.innerHTML = `<span style="color:#c62828;">No zone matched this crop area</span>`;
+    res.style.display = 'block';
+  }
+
+  renderAll();     // re-render with scores + crop overlay
+
+  // Track best sheet for Query Hyper Data (largest zone with best coverage)
+  // Among sheets that score 100%, prefer the one with the largest zone area
+  let querySheet = null;
+  if (allMatched.length > 0) {
+    // Find the zone with the largest area among the top-scored sheets
+    const topScore = allMatched[0][1];
+    const topMatches = allMatched.filter(([, s]) => s >= topScore - 0.001);
+    if (topMatches.length === 1) {
+      querySheet = topMatches[0][0];
+    } else {
+      // Multiple sheets at same score — prefer the one with largest zone area
+      let biggestArea = -1, biggestName = topMatches[0][0];
+      topMatches.forEach(([name]) => {
+        const z = currentDash.zones.find(z => z.sheetName === name);
+        const area = z ? (z.w * z.h) : 0;
+        if (area > biggestArea) { biggestArea = area; biggestName = name; }
+      });
+      querySheet = biggestName;
+    }
+  }
+  lastBestSheet = querySheet;
+  document.getElementById('querySection').style.display = lastBestSheet ? 'block' : 'none';
+  document.getElementById('queryStatus').style.display  = 'none';
+
+  // Sheet Detail: parse matched sheet XML and switch to detail tab
+  if (bestSheet && parsedDoc) {
+    const detail = parseSheetDetail(parsedDoc, bestSheet);
+    renderSheetDetail(detail, bestScore);
+    document.getElementById('tabbtn-detail').style.display = 'inline-block';
+    switchTab('detail');
+  } else {
+    switchTab('zones');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Download from Tableau Server — uses existing Flask session auth
+// ─────────────────────────────────────────────────────────────
+async function queryTableauData() {
+  if (!lastBestSheet) {
+    alert('Run Test Mapping first to identify a matching sheet.');
+    return;
+  }
+
+  const workbookName = (document.getElementById('tableauWorkbookName').value || '').trim();
+  if (!workbookName) {
+    alert('Enter the Tableau workbook name (as it appears on Tableau Server).');
+    document.getElementById('tableauWorkbookName').focus();
+    return;
+  }
+
+  const btn  = document.getElementById('queryBtn');
+  const stat = document.getElementById('queryStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ Downloading…';
+  stat.style.display = 'block';
+  stat.textContent = `Fetching "${lastBestSheet}" from Tableau Server…`;
+
+  // Show Data tab with a spinner immediately
+  document.getElementById('tabbtn-data').style.display = 'inline-block';
+  document.getElementById('dataTabWrap').innerHTML =
+    `<div style="padding:40px;text-align:center;">
+       <div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto 14px;"></div>
+       <div style="font-size:12px;color:#888;">
+         Downloading <strong>${escHtml(lastBestSheet)}</strong>
+         from workbook <strong>${escHtml(workbookName)}</strong>…
+       </div>
+     </div>`;
+  switchTab('data');
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/debug/view-csv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workbook_name: workbookName,
+        sheet_name:    lastBestSheet,
+        max_rows:      500,
+      }),
+    });
+    const json = await resp.json();
+
+    if (!resp.ok || json.error) {
+      // Handle auth-required gracefully
+      if (json.auth_required) {
+        document.getElementById('dataTabWrap').innerHTML =
+          `<div class="error-msg" style="margin:16px;">
+            🔐 Not logged in to Tableau.<br>
+            <a href="${API_BASE}/" target="_blank" style="color:#1565c0;">
+              Click here to log in
+            </a>, then come back and try again.
+          </div>`;
+        stat.textContent = '❌ Authentication required';
+        return;
+      }
+      const msg = json.error || `HTTP ${resp.status}`;
+
+      // Embedded-worksheet case: sheet lives inside a Dashboard, show picker
+      if (json.embedded_sheet && json.available_views && json.available_views.length) {
+        const viewBtns = json.available_views.map(v =>
+          `<button onclick="downloadViewById(${JSON.stringify(v.id)},${JSON.stringify(v.name)},${JSON.stringify(workbookName)})"
+            style="display:block;width:100%;margin:4px 0;padding:8px 14px;
+                   background:#1565c0;color:#fff;border:none;border-radius:6px;
+                   cursor:pointer;font-size:12px;text-align:left;font-weight:600;">
+            ⬇ ${escHtml(v.name)}
+          </button>`).join('');
+        document.getElementById('dataTabWrap').innerHTML =
+          `<div style="padding:20px;max-width:480px;">
+            <div style="background:#fff3e0;border-left:4px solid #ff9800;padding:10px 14px;
+                        border-radius:4px;margin-bottom:14px;font-size:12px;line-height:1.6;">
+              ⚠️ <strong>${escHtml(json.embedded_sheet)}</strong> is a worksheet
+              <em>embedded inside a Dashboard</em> — it is not published as a
+              standalone view on Tableau Server.<br><br>
+              Select a published view below to download its data:
+            </div>
+            ${viewBtns}
+          </div>`;
+        stat.textContent = '⚠ Pick a view below';
+        return;
+      }
+
+      // Generic error — show available views if returned
+      const avail = (json.available_views && json.available_views.length)
+        ? `<br><br><strong>Available views in this workbook:</strong><br>` +
+          json.available_views.map(v =>
+            typeof v === 'string' ? `• ${escHtml(v)}` : `• ${escHtml(v.name)}`
+          ).join('<br>')
+        : '';
+      document.getElementById('dataTabWrap').innerHTML =
+        `<div class="error-msg" style="margin:16px;">❌ ${escHtml(msg)}${avail}</div>`;
+      stat.textContent = '❌ ' + msg;
+    } else {
+      // Add a source badge so user knows this is live Tableau data
+      json._sourceBadge = `Live Tableau Server · ${escHtml(json.workbook_name)}`;
+      renderDataTable(json);
+      stat.textContent = `✓ ${json.total_rows} rows · ${json.columns.length} columns (live)`;
+    }
+  } catch (err) {
+    const errMsg = err.message || String(err);
+    document.getElementById('dataTabWrap').innerHTML =
+      `<div class="error-msg" style="margin:16px;">
+        ❌ Network error: ${escHtml(errMsg)}<br>
+        <span style="font-size:11px;color:#888;margin-top:4px;display:block;">
+          Make sure you are accessing this tool via
+          <a href="${API_BASE}/debug" target="_blank">${API_BASE}/debug</a>
+        </span>
+      </div>`;
+    stat.textContent = '❌ ' + errMsg;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ Download from Tableau';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Download a specific view by its Tableau Server view ID
+// Called from the embedded-sheet picker buttons
+// ─────────────────────────────────────────────────────────────
+async function downloadViewById(viewId, viewName, workbookName) {
+  const stat = document.getElementById('queryStatus');
+  stat.style.display = 'block';
+  stat.textContent = `Downloading "${viewName}"…`;
+  document.getElementById('dataTabWrap').innerHTML =
+    `<div style="padding:40px;text-align:center;">
+       <div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto 14px;"></div>
+       <div style="font-size:12px;color:#888;">Downloading <strong>${escHtml(viewName)}</strong>…</div>
+     </div>`;
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/debug/view-csv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workbook_name: workbookName,
+        sheet_name:    viewName,
+        view_id:       viewId,
+        max_rows:      500,
+      }),
+    });
+    const json = await resp.json();
+    if (!resp.ok || json.error) {
+      document.getElementById('dataTabWrap').innerHTML =
+        `<div class="error-msg" style="margin:16px;">❌ ${escHtml(json.error || 'Unknown error')}</div>`;
+      stat.textContent = '❌ Failed';
+    } else {
+      json._sourceBadge = `Live Tableau Server · ${escHtml(workbookName)}`;
+      renderDataTable(json);
+      stat.textContent = `✓ ${json.total_rows} rows · ${json.columns.length} columns (live)`;
+    }
+  } catch (err) {
+    document.getElementById('dataTabWrap').innerHTML =
+      `<div class="error-msg" style="margin:16px;">❌ ${escHtml(err.message)}</div>`;
+    stat.textContent = '❌ Network error';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Render the returned JSON data as a sortable preview table
+// ─────────────────────────────────────────────────────────────
+function renderDataTable(json) {
+  const { sheet_name, columns, rows, total_rows, preview_rows,
+          layout_warning, filters_applied } = json;
+
+  // Sort state
+  let sortCol = -1, sortAsc = true;
+  let currentRows = rows.slice();
+
+  const wrap = document.getElementById('dataTabWrap');
+
+  // Build filter summary HTML
+  const buildFilterBanner = () => {
+    if (!filters_applied) return '';
+    const { categorical = [], date = [], top = [], relative = [] } = filters_applied;
+    const badges = [];
+
+    categorical.forEach(f => {
+      const vals = f.values.slice(0, 5).map(v => escHtml(String(v))).join(', ');
+      const more = f.values.length > 5 ? ` +${f.values.length - 5} more` : '';
+      badges.push(`<span class="filter-badge cat-badge" title="${escHtml(f.col)}">
+        ${f.exclude ? '≠' : '='} ${escHtml(f.col.replace(/_/g,' '))}:
+        [${vals}${more}]
+      </span>`);
+    });
+
+    relative.forEach(f => {
+      if (f.type === 'fixed') {
+        badges.push(`<span class="filter-badge date-badge" title="${escHtml(f.col)}">
+          📅 ${escHtml(f.col.replace(/_/g,' '))}: ${escHtml(f.start_date)} → ${escHtml(f.end_date)}
+        </span>`);
+      } else {
+        const pa = f.periods_ago != null ? f.periods_ago : '?';
+        const gran = f.granularity || 'day';
+        const pn = f.param_name ? ` (${escHtml(f.param_name)})` : '';
+        badges.push(`<span class="filter-badge date-badge ${f.periods_ago == null ? 'badge-warn' : ''}"
+          title="${escHtml(f.col)}">
+          📅 ${escHtml(f.col.replace(/_/g,' '))}: last ${pa} ${gran}s${pn}
+          ${f.periods_ago == null ? ' ⚠ unresolved' : ''}
+        </span>`);
+      }
+    });
+
+    top.forEach(f => {
+      const by = f.by_col ? ` by ${escHtml(f.by_col.replace(/_/g,' '))}` : '';
+      badges.push(`<span class="filter-badge topn-badge" title="${escHtml(f.col)}">
+        🔝 Top ${f.count} ${escHtml(f.col.replace(/_/g,' '))}${by}
+      </span>`);
+    });
+
+    date.forEach(f => {
+      badges.push(`<span class="filter-badge cat-badge" title="${escHtml(f.col)}">
+        📆 ${escHtml(f.col.replace(/_/g,' '))}: ${f.years.join(', ')}
+      </span>`);
+    });
+
+    if (!badges.length) return '';
+    return `<div class="filter-banner">
+      <span style="font-weight:600;font-size:11px;color:#555;margin-right:6px;">Filters applied:</span>
+      ${badges.join('')}
+    </div>`;
+  };
+
+  const buildTable = () => {
+    let html = '';
+
+    // Layout warning banner
+    if (layout_warning) {
+      html += `<div class="layout-warning">
+        ⚠️ <strong>Table Calculation Sheet</strong> —
+        ${escHtml(layout_warning)}
+      </div>`;
+    }
+
+    // Filter badges banner
+    html += buildFilterBanner();
+
+    // Header toolbar
+    const srcBadge = json._sourceBadge
+      ? `<span style="background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;
+                      border-radius:8px;padding:1px 8px;font-size:10px;font-weight:700;
+                      margin-left:8px;">🟢 ${json._sourceBadge}</span>`
+      : `<span style="background:#fff3e0;color:#e65100;border:1px solid #ffcc80;
+                      border-radius:8px;padding:1px 8px;font-size:10px;font-weight:700;
+                      margin-left:8px;">🟡 Reconstructed</span>`;
+    html += `<div class="data-toolbar">
+      <span class="data-info">
+        <strong>${escHtml(sheet_name)}</strong>${srcBadge} &nbsp;·&nbsp;
+        ${total_rows.toLocaleString()} rows &nbsp;·&nbsp;
+        ${columns.length} columns
+        ${preview_rows < total_rows ? ` <em style="color:#e65100;">(showing first ${preview_rows})</em>` : ''}
+      </span>
+      <button class="btn-dl" onclick="downloadCsv()">⬇ CSV</button>
+    </div>`;
+
+    // Table
+    html += `<div class="data-preview-wrap" style="overflow:auto;flex:1;">
+      <table class="data-preview-table" id="previewTable">
+        <thead><tr>`;
+
+    columns.forEach((col, ci) => {
+      const arrow = ci === sortCol ? '' : '';
+      const sortCls = ci === sortCol ? (sortAsc ? 'sort-asc' : 'sort-desc') : '';
+      html += `<th class="${sortCls}" onclick="sortTable(${ci})"
+        title="${escHtml(col)}">${escHtml(col)}<span class="sort-arrow"></span></th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    currentRows.forEach(row => {
+      html += '<tr>';
+      row.forEach((cell, ci) => {
+        if (cell === null || cell === undefined || cell === '') {
+          html += `<td class="cell-null">—</td>`;
+        } else if (typeof cell === 'number' || (typeof cell === 'string' && !isNaN(Number(cell)) && cell.trim() !== '')) {
+          const num = typeof cell === 'number' ? cell : Number(cell);
+          const fmt = Number.isInteger(num) ? num.toLocaleString() : num.toLocaleString(undefined, {maximumFractionDigits:2});
+          html += `<td class="cell-num" title="${cell}">${fmt}</td>`;
+        } else {
+          const txt = String(cell);
+          html += `<td title="${escHtml(txt)}">${escHtml(txt.length > 40 ? txt.slice(0,40)+'…' : txt)}</td>`;
+        }
+      });
+      html += '</tr>';
+    });
+
+    html += `</tbody></table></div>`;
+    wrap.innerHTML = html;
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.height = '100%';
+    wrap.style.overflow = 'hidden';
+  };
+
+  // Expose sort function globally (called from onclick)
+  window.sortTable = (ci) => {
+    if (sortCol === ci) sortAsc = !sortAsc;
+    else { sortCol = ci; sortAsc = true; }
+    currentRows.sort((a, b) => {
+      const av = a[ci], bv = b[ci];
+      if (av === null || av === undefined) return sortAsc ? 1 : -1;
+      if (bv === null || bv === undefined) return sortAsc ? -1 : 1;
+      const an = Number(av), bn = Number(bv);
+      if (!isNaN(an) && !isNaN(bn)) return sortAsc ? an - bn : bn - an;
+      return sortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
+    buildTable();
+  };
+
+  // Expose CSV download globally
+  window.downloadCsv = () => {
+    const csvRows = [columns.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')];
+    rows.forEach(row => {
+      csvRows.push(row.map(cell => {
+        if (cell === null || cell === undefined) return '';
+        const s = String(cell).replace(/"/g,'""');
+        return /[,"\n]/.test(s) ? `"${s}"` : s;
+      }).join(','));
+    });
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${sheet_name.replace(/[^a-z0-9_-]/gi,'_')}_data.csv`;
+    a.click();
+  };
+
+  buildTable();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sheet Detail: deep XML parse of best-matched worksheet
+// ─────────────────────────────────────────────────────────────
+function parseSheetDetail(doc, sheetName) {
+  // Build field catalog from all datasources
+  const catalog = {};
+  doc.querySelectorAll('datasource').forEach(ds => {
+    Array.from(ds.children).forEach(col => {
+      if (col.tagName.toLowerCase() !== 'column') return;
+      const name    = col.getAttribute('name') || '';
+      const caption = col.getAttribute('caption') || name.replace(/^\[|\]$/g,'');
+      const role    = col.getAttribute('role')    || '';
+      const dtype   = col.getAttribute('datatype')|| '';
+      if (!name) return;
+      const raw = name.replace(/^\[|\]$/g,'');
+      // Store under both the raw key and the key with Tableau type suffix stripped
+      const key = raw.toUpperCase().replace(/ /g,'_');
+      catalog[key] = { caption, role, dtype };
+      // Also strip trailing :nk/:ok/:qk/:pk/:rk/:dr/:tk suffix variants
+      const stripped = raw.replace(/:[a-z]{1,2}k$/i,'').toUpperCase().replace(/ /g,'_');
+      if (stripped !== key) catalog[stripped] = { caption, role, dtype };
+    });
+  });
+
+  // Find the exact worksheet element
+  let wsEl = null;
+  doc.querySelectorAll('worksheet').forEach(ws => {
+    if (ws.getAttribute('name') === sheetName) wsEl = ws;
+  });
+  if (!wsEl) return null;
+
+  // Strip Tableau type suffixes (:ok, :nk, :qk, :pk, :rk, :dr, :tk, :un, :yr)
+  // These always appear as the trailing colon+2chars at end of a field token segment.
+  const stripSuffix = s => s.replace(/:[a-z]{1,2}k$/i,'').replace(/:un$/i,'').replace(/:dr$/i,'');
+
+  // Helper: resolve the last [bracket] token from a datasource-qualified field attribute.
+  // Field attrs can be: "[sum:Profit:ok]"  OR  "federated.xxx.[sum:Profit:ok]"
+  // OR "[federated.xxx].[sum:Profit:ok]"  — always take the LAST [bracket] group.
+  const resolveFieldAttr = (fAttr, shelf) => {
+    if (!fAttr) return null;
+    const allBrackets = fAttr.match(/\[[^\]]+\]/g);
+    // Take last bracket (the actual field token, not the datasource prefix)
+    const token = allBrackets ? allBrackets[allBrackets.length - 1] : fAttr;
+    return resolveToken(token, shelf);
+  };
+
+  // Helper: parse a single [agg:Field:suffix] or [Field:suffix] token
+  const resolveToken = (t, shelf) => {
+    if (!t) return null;
+    const inner = t.replace(/^\[|\]$/g,'');
+    const parts = inner.split(':');
+    let agg = 'none', field = inner;
+    if (parts.length >= 3) {
+      // [agg:FieldName:suffix] → e.g. [sum:Profit:ok] or [none:Category:nk]
+      agg   = parts[0].toLowerCase();
+      // Strip the trailing Tableau type suffix from field parts
+      const fieldParts = parts.slice(1);
+      const last = fieldParts[fieldParts.length - 1];
+      if (/^[a-z]{1,2}k$/i.test(last) || last === 'un' || last === 'dr') fieldParts.pop();
+      field = fieldParts.join(':');
+    } else if (parts.length === 2) {
+      // Could be [Field:suffix] (dimension) or [agg:Field] (no suffix)
+      const maybeSuffix = parts[1];
+      if (/^[a-z]{1,2}k$/i.test(maybeSuffix) || maybeSuffix === 'un' || maybeSuffix === 'dr') {
+        // It's [FieldName:suffix] — dimension, no agg
+        agg = 'none'; field = parts[0];
+      } else {
+        agg = parts[0].toLowerCase(); field = parts[1];
+      }
+    }
+    const fieldKey  = field.toUpperCase().replace(/ /g,'_');
+    const entry     = catalog[fieldKey] || catalog[stripSuffix(fieldKey)] || null;
+    const caption   = entry?.caption || field;
+    const role      = entry?.role || (agg === 'none' ? 'dimension' : 'measure');
+    const dtype     = entry?.dtype || '';
+    return { agg, field, caption, role, dtype, shelf };
+  };
+
+  const extractFields = (text, shelf) => {
+    if (!text) return [];
+    const tokens = (text.match(/\[[^\]]+\]/g) || []);
+    const out = [];
+    tokens.forEach(t => {
+      if (t.toLowerCase().includes('federated')) return;
+      const tClean = t.replace(/^\[|\]$/g,'');
+      if (['Measure Names','Measure Values','Number of Records','Measure Values'].includes(tClean)) return;
+      const f = resolveToken(t, shelf);
+      if (f) out.push(f);
+    });
+    return out;
+  };
+
+  const rowsText  = wsEl.querySelector('rows')?.textContent || '';
+  const colsText  = wsEl.querySelector('cols')?.textContent || '';
+  const rowFields = extractFields(rowsText, 'rows');
+  const colFields = extractFields(colsText, 'cols');
+
+  // Mark type (chart type)
+  const markEl   = wsEl.querySelector('mark');
+  const markType = markEl?.getAttribute('class') || '—';
+
+  // Encoding type → friendly display name mapping.
+  // Tableau uses many internal type names across versions.
+  const ENC_TYPE_MAP = {
+    interpolated: 'Color',  palette:   'Color',   color:   'Color',
+    centersize:   'Size',   size:      'Size',
+    text:         'Text',   label:     'Label',
+    tooltip:      'Tooltip',detail:    'Detail',
+    shape:        'Shape',  opacity:   'Opacity',
+    angle:        'Angle',  xsrc:      'X',       ysrc:    'Y',
+    named:        'Color'   // named palette = discrete color
+  };
+  // Tags that unambiguously mean a semantic encoding channel
+  const SEMANTIC_ENC = new Set(['color','size','text','shape','detail','label','tooltip','angle','opacity','xsrc','ysrc']);
+
+  // ── COMPREHENSIVE ENCODING SCAN ────────────────────────────────────────────
+  // Tableau uses at least 3 XML formats across versions:
+  //   A) <encoding type="color" field="[sum:Profit:ok]"/>           (flat, type attr)
+  //   B) <encoding><interpolated field="[sum:Profit:ok]"/></encoding>  (child tag = type)
+  //   C) <encoding><color><interpolated field="..."/></color></encoding> (nested: parent=color)
+  //
+  // Strategy: walk EVERY descendant of the worksheet. For each element that
+  // carries a field/column attribute, determine its encoding channel from:
+  //   1. Semantic PARENT tag (color, size, text…) — most reliable
+  //   2. Own tag if it maps in ENC_TYPE_MAP (interpolated→Color, centersize→Size…)
+  //   3. type attribute value
+  //   Exclude elements inside <filter>, <rows>, <cols>, <calculation>.
+
+  const encodings = [];
+  const encSeen   = new Set();
+
+  const addEnc = (rawTag, typeHint, fAttr) => {
+    if (!fAttr) return;
+    const f = resolveFieldAttr(fAttr, typeHint);
+    if (!f || !f.field || f.field.length < 2) return;
+    // If resolution completely failed, the field will still contain the datasource hash — skip
+    if (/federated\.[0-9a-f]{20,}/i.test(f.field)) return;
+    const key = `${typeHint}||${f.field.toUpperCase()}`;
+    if (encSeen.has(key)) return;
+    encSeen.add(key);
+    const friendlyType = ENC_TYPE_MAP[typeHint.toLowerCase()]
+                      || ENC_TYPE_MAP[rawTag.toLowerCase()]
+                      || typeHint;
+    encodings.push({ rawType: rawTag, type: friendlyType, field: f.field, caption: f.caption, agg: f.agg });
+  };
+
+  wsEl.querySelectorAll('*').forEach(el => {
+    // Skip filter internals, shelf text, calculation nodes
+    try { if (el.closest('filter') || el.closest('calculation')) return; } catch(e) {}
+    const tag = el.tagName.toLowerCase();
+    if (['rows','cols','filter','groupfilter','calculation','condition',
+         'datasource-dependencies'].includes(tag)) return;
+
+    const fAttr = el.getAttribute('field') || el.getAttribute('column') || '';
+    if (!fAttr) return;
+
+    const parentTag = (el.parentElement?.tagName || '').toLowerCase();
+    const typeAttr  = el.getAttribute('type') || '';
+
+    let typeHint;
+    if (SEMANTIC_ENC.has(parentTag)) {
+      // Best case: element is a child of <color>, <size>, etc.
+      typeHint = parentTag;
+    } else if (ENC_TYPE_MAP[tag] || SEMANTIC_ENC.has(tag)) {
+      // Own tag maps to a known encoding (interpolated, centersize, color, size…)
+      typeHint = tag;
+    } else if (typeAttr && (ENC_TYPE_MAP[typeAttr] || SEMANTIC_ENC.has(typeAttr))) {
+      // type="color" / type="interpolated" attribute
+      typeHint = typeAttr;
+    } else {
+      // Unknown element with a field attr — record it under its own tag name
+      typeHint = tag;
+    }
+    addEnc(tag, typeHint, fAttr);
+  });
+
+  // ── DATASOURCE-DEPENDENCIES (ground-truth field list) ─────────────────────
+  // <datasource-dependencies> lists EVERY field the worksheet uses (rows, cols,
+  // filters, marks shelf, tooltips). Subtract axis+filter fields to get
+  // "marks shelf + tooltip" candidates.
+  const depFieldsList = [];
+  wsEl.querySelectorAll('datasource-dependencies column').forEach(col => {
+    const nameAttr = col.getAttribute('name') || '';
+    if (!nameAttr) return;
+    const f = resolveToken(nameAttr, 'dep');
+    if (!f || !f.field || f.field.length < 2) return;
+    if (/federated\.[0-9a-f]{20,}/i.test(f.field)) return;
+    depFieldsList.push({ field: f.field, caption: f.caption, role: f.role, agg: f.agg });
+  });
+
+  // Filters
+  const filters = [];
+  wsEl.querySelectorAll('filter').forEach(fEl => {
+    const cls    = fEl.getAttribute('class')  || '';
+    const col    = fEl.getAttribute('column') || '';
+    // col can be "[Region:nk]" or "federated.xxx.[Region:nk]" — use last bracket
+    const allBrackets = col.match(/\[[^\]]+\]/g);
+    const lastBracket = allBrackets ? allBrackets[allBrackets.length - 1] : col;
+    const resolved   = resolveToken(lastBracket || col, '');
+    const inner   = resolved?.field  || col.replace(/^\[|\]$/g,'');
+    const caption = resolved?.caption || inner;
+
+    const obj = { cls, column: inner, caption };
+
+    if (cls === 'categorical') {
+      const members  = [];
+      let   excluded = false;
+      fEl.querySelectorAll('groupfilter').forEach(gf => {
+        if (gf.getAttribute('function') === 'except') excluded = true;
+        if (gf.getAttribute('function') === 'member') {
+          const m = gf.getAttribute('member');
+          if (m !== null) members.push(m);
+        }
+      });
+      obj.filterType = 'categorical';
+      obj.excluded   = excluded;
+      obj.members    = members;
+    } else if (cls === 'range' || cls === 'quantitative') {
+      const minEl = fEl.querySelector('min');
+      const maxEl = fEl.querySelector('max');
+      obj.filterType = 'range';
+      obj.min = minEl?.textContent?.trim() ?? fEl.getAttribute('min') ?? null;
+      obj.max = maxEl?.textContent?.trim() ?? fEl.getAttribute('max') ?? null;
+    } else if (cls === 'relative-date') {
+      obj.filterType = 'relative-date';
+      obj.period     = fEl.getAttribute('period')           || '';
+      obj.units      = fEl.getAttribute('units')            || '';
+      obj.anchor     = fEl.getAttribute('anchor-date')      || '';
+    } else {
+      obj.filterType = cls || 'other';
+    }
+
+    filters.push(obj);
+  });
+
+  return { sheetName, rowFields, colFields, markType, encodings, filters, depFieldsList };
+}
+
+function renderSheetDetail(detail, score) {
+  const wrap = document.getElementById('sheetDetailWrap');
+  if (!detail) {
+    wrap.innerHTML = '<div style="padding:20px;text-align:center;color:#bbb;font-size:12px;">Sheet not found in workbook XML</div>';
+    return;
+  }
+
+  // Friendly aggregation label mapping (Tableau internal codes → display name)
+  const AGG_LABEL = {
+    sum:'SUM', avg:'AVG', cnt:'COUNT', cntd:'COUNTD', max:'MAX', min:'MIN',
+    attr:'ATTR', median:'MEDIAN', stdev:'STDEV', var:'VAR',
+    yr:'YEAR', qr:'QUARTER', mn:'MONTH', wk:'WEEK', dy:'DAY', hr:'HOUR',
+    year:'YEAR', quarter:'QUARTER', month:'MONTH', week:'WEEK', day:'DAY', hour:'HOUR',
+    mdy:'MDY', none:'—'
+  };
+  const aggLabel = a => AGG_LABEL[a?.toLowerCase()] || (a && a !== 'none' ? a.toUpperCase() : '—');
+
+  const AGG_FUNCS = new Set(['sum','avg','cnt','cntd','max','min','attr','year','quarter','month','week','day','hour',
+    'yr','qr','mn','wk','dy','hr','median','stdev','var']);
+  const pct = (score * 100).toFixed(1);
+  const barColor = score > 0.5 ? '#4caf50' : score > 0.1 ? '#ff9800' : '#e0e0e0';
+  const badgeCls = score > 0.5 ? 'score-high' : score > 0.1 ? 'score-med' : 'score-low';
+
+  let html = `
+  <!-- Header: sheet name + overlap score -->
+  <div style="padding:10px 12px;border-bottom:1px solid #f0f2f5;background:#fafbfd;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+      <span style="font-size:13px;font-weight:700;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-right:8px;" title="${escHtml(detail.sheetName)}">${escHtml(detail.sheetName)}</span>
+      <span class="score-badge ${badgeCls}">${pct}%</span>
+    </div>
+    <div style="height:5px;background:#f0f2f5;border-radius:4px;margin-bottom:6px;">
+      <div style="height:5px;background:${barColor};border-radius:4px;width:${Math.min(100,score*100).toFixed(1)}%;"></div>
+    </div>
+    <div style="font-size:11px;color:#888;">Chart type: <strong style="color:#444;">${escHtml(detail.markType)}</strong></div>
+  </div>
+
+  <!-- Axis Fields -->
+  <div style="padding:8px 12px;border-bottom:1px solid #f0f2f5;">
+    <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:7px;">
+      Axis Fields <span style="color:#5b6af8;font-size:11px;font-weight:700;">${detail.rowFields.length + detail.colFields.length}</span>
+    </div>`;
+
+  const allAxisFields = [...detail.rowFields, ...detail.colFields];
+  if (allAxisFields.length === 0) {
+    html += `<div style="font-size:11px;color:#bbb;">No fields found in rows/cols shelves</div>`;
+  } else {
+    html += `<table class="data-table" style="font-size:11px;"><thead><tr>
+      <th>Shelf</th><th>Aggregation</th><th>Field</th><th>Role</th>
+    </tr></thead><tbody>`;
+    allAxisFields.forEach(f => {
+      const isMeas  = AGG_FUNCS.has(f.agg) || f.role === 'measure';
+      const roleColor = isMeas ? '#880e4f' : '#1565c0';
+      const shelfBg   = f.shelf === 'rows' ? '#e8f5e9' : '#e3f2fd';
+      const shelfCol  = f.shelf === 'rows' ? '#2e7d32' : '#1565c0';
+      html += `<tr>
+        <td><span style="font-size:10px;background:${shelfBg};color:${shelfCol};padding:1px 6px;border-radius:4px;font-weight:600;">${f.shelf}</span></td>
+        <td><span style="font-family:monospace;font-size:10px;color:#666;">${escHtml(aggLabel(f.agg))}</span></td>
+        <td style="font-weight:500;color:#222;">${escHtml(f.caption || f.field)}</td>
+        <td><span style="font-size:10px;color:${roleColor};font-weight:700;">${isMeas ? 'MEAS' : 'DIM'}</span></td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+
+  // Encodings (color, size, label, tooltip, shape, detail)
+  if (detail.encodings.length > 0) {
+    html += `<div style="padding:8px 12px;border-bottom:1px solid #f0f2f5;">
+      <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:7px;">Marks / Encodings</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;">`;
+    const encIcons = { Color:'🎨', Size:'⬤', Text:'T', Shape:'◆', Detail:'●', Label:'🏷️', Tooltip:'💬', Opacity:'◐', X:'↔', Y:'↕' };
+    const encColors = { Color:'#e3f2fd:#1565c0', Size:'#fce4ec:#880e4f', Text:'#f3e5f5:#6a1b9a',
+                        Label:'#fff8e1:#f57f17', Tooltip:'#e8f5e9:#2e7d32', Detail:'#f5f5f5:#555',
+                        Shape:'#fbe9e7:#bf360c', Opacity:'#ede7f6:#4527a0' };
+    detail.encodings.forEach(enc => {
+      const icon   = encIcons[enc.type] || '·';
+      const colors = encColors[enc.type] ? encColors[enc.type].split(':') : ['#f5f6fa','#444'];
+      const aggTxt = enc.agg && enc.agg !== 'none' ? `${aggLabel(enc.agg)}(${escHtml(enc.caption || enc.field)})` : escHtml(enc.caption || enc.field);
+      html += `<div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;background:${colors[0]};border:1px solid ${colors[1]}22;padding:4px 10px;border-radius:10px;white-space:nowrap;" title="Internal type: ${escHtml(enc.rawType)}">
+        <span>${icon}</span>
+        <span style="font-weight:700;color:${colors[1]};">${escHtml(enc.type)}</span>
+        <span style="color:#666;">: ${aggTxt}</span>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // All fields from datasource-dependencies (ground truth)
+  if (detail.depFieldsList && detail.depFieldsList.length > 0) {
+    // Fields already on rows/cols or in filters
+    const axisSet   = new Set([...detail.rowFields, ...detail.colFields].map(f => f.field.toUpperCase()));
+    const filterSet = new Set(detail.filters.map(f => (f.column || '').toUpperCase()));
+    const marksOnly = detail.depFieldsList.filter(
+      f => !axisSet.has(f.field.toUpperCase()) && !filterSet.has(f.field.toUpperCase())
+    );
+
+    if (marksOnly.length > 0) {
+      html += `<div style="padding:8px 12px;border-bottom:1px solid #f0f2f5;background:#fffbf0;">
+        <div style="font-size:10px;font-weight:700;color:#e65100;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:7px;">
+          📌 Marks Shelf Fields (from datasource-deps)
+          <span style="font-size:10px;color:#aaa;font-weight:400;text-transform:none;"> — fields used by this sheet that are not on rows/cols/filters</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;">`;
+      marksOnly.forEach(f => {
+        const isMeas = f.role === 'measure' || AGG_FUNCS.has(f.agg);
+        const bg  = isMeas ? '#fce4ec' : '#e3f2fd';
+        const col = isMeas ? '#880e4f' : '#1565c0';
+        const aggTxt = f.agg && f.agg !== 'none' && f.agg !== 'dep' ? `${aggLabel(f.agg)}(${escHtml(f.caption || f.field)})` : escHtml(f.caption || f.field);
+        html += `<span style="font-size:11px;background:${bg};color:${col};border:1px solid ${col}22;padding:3px 9px;border-radius:10px;font-weight:500;">${aggTxt}</span>`;
+      });
+      html += `</div></div>`;
+    }
+  }
+
+  // Filters
+  html += `<div style="padding:8px 12px;">
+    <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:7px;">
+      Filters <span style="color:#5b6af8;font-size:11px;font-weight:700;">${detail.filters.length}</span>
+    </div>`;
+
+  if (detail.filters.length === 0) {
+    html += `<div style="font-size:11px;color:#bbb;">No filters applied to this worksheet</div>`;
+  } else {
+    const typeColors = { categorical:'#1565c0', range:'#6a1b9a', 'relative-date':'#e65100', other:'#555' };
+    detail.filters.forEach(f => {
+      const typeColor = typeColors[f.filterType] || '#555';
+      let valHtml = '';
+
+      if (f.filterType === 'categorical') {
+        const mode = f.excluded ? '🚫 Exclude' : '✅ Include';
+        const shown = f.members.slice(0, 12);
+        const moreCount = f.members.length - shown.length;
+        valHtml = `<div style="margin-top:4px;">
+          <span style="font-size:10px;color:#666;font-weight:600;">${mode}</span>
+          ${shown.length > 0
+            ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px;">
+                ${shown.map(m => `<span style="font-size:10px;background:${f.excluded?'#fff3e0':'#e8f5e9'};color:${f.excluded?'#e65100':'#2e7d32'};padding:1px 7px;border-radius:10px;">${escHtml(m)}</span>`).join('')}
+                ${moreCount > 0 ? `<span style="font-size:10px;color:#aaa;padding:1px 6px;">+${moreCount} more</span>` : ''}
+              </div>`
+            : `<span style="font-size:11px;color:#aaa;margin-left:5px;">all members</span>`}
+        </div>`;
+      } else if (f.filterType === 'range') {
+        const minTxt = f.min !== null && f.min !== '' ? f.min : '—';
+        const maxTxt = f.max !== null && f.max !== '' ? f.max : '—';
+        valHtml = `<div style="margin-top:4px;font-size:11px;color:#666;">
+          <span style="font-family:monospace;background:#f5f5f5;padding:1px 6px;border-radius:4px;">${escHtml(minTxt)}</span>
+          <span style="color:#aaa;margin:0 4px;">→</span>
+          <span style="font-family:monospace;background:#f5f5f5;padding:1px 6px;border-radius:4px;">${escHtml(maxTxt)}</span>
+        </div>`;
+      } else if (f.filterType === 'relative-date') {
+        valHtml = `<div style="margin-top:4px;font-size:11px;color:#666;">
+          Period: <strong>${escHtml(f.period || '—')}</strong>
+          ${f.units ? `&nbsp;·&nbsp; Units: <strong>${escHtml(f.units)}</strong>` : ''}
+          ${f.anchor ? `&nbsp;·&nbsp; Anchor: <strong>${escHtml(f.anchor)}</strong>` : ''}
+        </div>`;
+      } else {
+        valHtml = `<div style="margin-top:4px;font-size:11px;color:#aaa;">type: ${escHtml(f.filterType)}</div>`;
+      }
+
+      html += `<div style="padding:6px 0;border-bottom:1px solid #f8f8f8;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:11px;font-weight:600;color:#222;flex:1;min-width:80px;">${escHtml(f.caption || f.column)}</span>
+          <span style="font-size:10px;padding:1px 8px;border-radius:8px;background:#f0f2f5;color:${typeColor};font-weight:600;white-space:nowrap;">${escHtml(f.filterType)}</span>
+        </div>
+        ${valHtml}
+      </div>`;
+    });
+  }
+  html += `</div>`;
+
+  wrap.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escSvg(s) { return escHtml(s); }
+</script>
+</body>
+</html>

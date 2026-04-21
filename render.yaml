@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: tableau-dashboard-app
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: gunicorn main:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tableau Spatial Matcher - Debug Tool</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; font-family: 'Inter', sans-serif; }
+        .card { border-radius: 12px; border: none; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        #visualizer { 
+            width: 100%; height: 500px; 
+            border: 2px dashed #cbd5e1; border-radius: 8px; 
+            position: relative; background: #fff;
+            overflow: hidden;
+        }
+        .zone { position: absolute; border: 2px solid #3b82f6; background: rgba(59, 130, 246, 0.1); transition: 0.2s; cursor: pointer; }
+        .zone:hover { background: rgba(59, 130, 246, 0.3); }
+        .zone-label { position: absolute; top: 4px; left: 4px; font-size: 10px; font-weight: bold; color: #1d4ed8; white-space: nowrap; pointer-events: none; }
+        .crop-rect { position: absolute; border: 2px dashed #ef4444; background: rgba(239, 68, 68, 0.2); pointer-events: none; z-index: 100; }
+        .stat-badge { font-family: monospace; font-size: 11px; }
+        .best-match { border-color: #10b981 !important; background: rgba(16, 185, 129, 0.2) !important; }
+    </style>
+</head>
+<body class="py-5">
+    <div class="container overflow-hidden">
+        <div class="row g-4">
+            <div class="col-lg-4">
+                <div class="card p-4 h-100">
+                    <h5 class="fw-bold mb-3">1. Input Configuration</h5>
+                    
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Upload Workbook (.twb)</label>
+                        <input type="file" id="workbookFile" class="form-control form-control-sm" accept=".twb">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Dashboard</label>
+                        <select id="dashboardSelect" class="form-select form-select-sm" disabled>
+                            <option>Upload a file first...</option>
+                        </select>
+                    </div>
+
+                    <hr>
+
+                    <h6 class="small fw-bold">Simulation Values (Pixels)</h6>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label mb-1 smaller" style="font-size: 10px;">IMG Width</label>
+                            <input type="number" id="imgWidth" class="form-control form-control-sm" value="1200">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label mb-1 smaller" style="font-size: 10px;">IMG Height</label>
+                            <input type="number" id="imgHeight" class="form-control form-control-sm" value="800">
+                        </div>
+                    </div>
+
+                    <div class="row g-2">
+                        <div class="col-3">
+                            <label class="form-label mb-1" style="font-size: 10px;">Crop X</label>
+                            <input type="number" id="cropX" class="form-control form-control-sm" value="50">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label mb-1" style="font-size: 10px;">Crop Y</label>
+                            <input type="number" id="cropY" class="form-control form-control-sm" value="450">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label mb-1" style="font-size: 10px;">Crop W</label>
+                            <input type="number" id="cropW" class="form-control form-control-sm" value="600">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label mb-1" style="font-size: 10px;">Crop H</label>
+                            <input type="number" id="cropH" class="form-control form-control-sm" value="300">
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <button id="runSim" class="btn btn-primary btn-sm w-100 fw-bold">Test Mapping</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-8">
+                <div class="card p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold mb-0">2. Spatial Visualization (0 - 100,000 Units)</h5>
+                        <div id="mappingStatus" class="small text-muted">Waiting for data...</div>
+                    </div>
+                    
+                    <div id="visualizer">
+                        <!-- Zones and Crop Rect will appear here -->
+                    </div>
+
+                    <div class="mt-4">
+                        <table class="table table-sm small align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Worksheet</th>
+                                    <th>Overlap Score</th>
+                                    <th>Units (X,Y,W,H)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsTable">
+                                <!-- Scores will appear here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const workbookFile = document.getElementById('workbookFile');
+        const dashboardSelect = document.getElementById('dashboardSelect');
+        const runSim = document.getElementById('runSim');
+        const visualizer = document.getElementById('visualizer');
+        const resultsTable = document.getElementById('resultsTable');
+        const mappingStatus = document.getElementById('mappingStatus');
+
+        let dashboards = {}; // { name: [zones] }
+
+        workbookFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const xmlText = event.target.result;
+                parseWorkbook(xmlText);
+            };
+            reader.readAsText(file);
+        });
+
+        function parseWorkbook(xmlText) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+            
+            dashboards = {};
+            const dashNodes = xmlDoc.getElementsByTagName("dashboard");
+            
+            for (let dash of dashNodes) {
+                const name = dash.getAttribute("name");
+                const zoneMap = {}; // Map to store unique sheets with their largest zone
+                
+                const zoneNodes = dash.getElementsByTagName("zone");
+                for (let zone of zoneNodes) {
+                    const sheet = zone.getAttribute("name");
+                    if (!sheet) continue;
+                    
+                    const x = parseInt(zone.getAttribute("x") || 0);
+                    const y = parseInt(zone.getAttribute("y") || 0);
+                    const w = parseInt(zone.getAttribute("width") || zone.getAttribute("w") || 0);
+                    const h = parseInt(zone.getAttribute("height") || zone.getAttribute("h") || 0);
+                    
+                    // Logic to find the "ActualSheet" - typically the one with the largest area
+                    // legends or parameters often have zero or very tiny dimensions
+                    if (!zoneMap[sheet] || (w * h > zoneMap[sheet].w * zoneMap[sheet].h)) {
+                        zoneMap[sheet] = { sheet, x, y, w, h };
+                    }
+                }
+                
+                const zones = Object.values(zoneMap);
+                if (zones.length > 0) {
+                    dashboards[name] = zones;
+                }
+            }
+
+            // Update Dropdown
+            dashboardSelect.innerHTML = "";
+            Object.keys(dashboards).forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                dashboardSelect.appendChild(opt);
+            });
+            dashboardSelect.disabled = false;
+            mappingStatus.textContent = `Found ${Object.keys(dashboards).length} dashboards.`;
+            renderDashboard();
+        }
+
+        function renderDashboard() {
+            const dashName = dashboardSelect.value;
+            const zones = dashboards[dashName] || [];
+            visualizer.innerHTML = "";
+
+            zones.forEach((z, i) => {
+                const div = document.createElement('div');
+                div.className = 'zone';
+                div.dataset.index = i;
+                div.style.left = `${z.x / 1000}%`;
+                div.style.top = `${z.y / 1000}%`;
+                div.style.width = `${z.w / 1000}%`;
+                div.style.height = `${z.h / 1000}%`;
+                
+                const label = document.createElement('div');
+                label.className = 'zone-label';
+                label.textContent = z.sheet;
+                div.appendChild(label);
+                
+                visualizer.appendChild(div);
+            });
+        }
+
+        dashboardSelect.addEventListener('change', renderDashboard);
+
+        runSim.addEventListener('click', () => {
+            const dashName = dashboardSelect.value;
+            if (!dashboards[dashName]) return;
+
+            const imgW = parseFloat(document.getElementById('imgWidth').value);
+            const imgH = parseFloat(document.getElementById('imgHeight').value);
+            const cpx = parseFloat(document.getElementById('cropX').value);
+            const cpy = parseFloat(document.getElementById('cropY').value);
+            const cpw = parseFloat(document.getElementById('cropW').value);
+            const cph = parseFloat(document.getElementById('cropH').value);
+
+            // 1. Normalize Pixels to Units (Tableau 100k system)
+            const xRatio = imgW / 100000;
+            const yRatio = imgH / 100000;
+
+            const cx = cpx / xRatio;
+            const cy = cpy / yRatio;
+            const cw = cpw / xRatio;
+            const ch = cph / yRatio;
+
+            // 2. Clear previous simulation
+            const oldCrop = visualizer.querySelector('.crop-rect');
+            if (oldCrop) oldCrop.remove();
+
+            // 3. Render Crop Rect
+            const cropDiv = document.createElement('div');
+            cropDiv.className = 'crop-rect';
+            cropDiv.style.left = `${cx / 1000}%`;
+            cropDiv.style.top = `${cy / 1000}%`;
+            cropDiv.style.width = `${cw / 1000}%`;
+            cropDiv.style.height = `${ch / 1000}%`;
+            visualizer.appendChild(cropDiv);
+
+            // 4. Calculate Scores
+            const zones = dashboards[dashName];
+            const results = zones.map(z => {
+                const overlapX = Math.max(cx, z.x);
+                const overlapY = Math.max(cy, z.y);
+                const overlapW = Math.min(cx + cw, z.x + z.w) - overlapX;
+                const overlapH = Math.min(cy + ch, z.y + z.h) - overlapY;
+
+                let score = 0;
+                if (overlapW > 0 && overlapH > 0) {
+                    score = (overlapW * overlapH) / (z.w * z.h);
+                }
+
+                return { ...z, score: score };
+            });
+
+            // Sort by score
+            results.sort((a, b) => b.score - a.score);
+
+            // 5. Render Table
+            resultsTable.innerHTML = "";
+            results.forEach((r, i) => {
+                const tr = document.createElement('tr');
+                if (i === 0 && r.score > 0) tr.className = 'table-success';
+                
+                tr.innerHTML = `
+                    <td class="fw-bold">${r.sheet}</td>
+                    <td><span class="badge ${r.score > 0.5 ? 'bg-success' : 'bg-secondary'}">${(r.score * 100).toFixed(1)}%</span></td>
+                    <td><span class="stat-badge">${r.x.toLocaleString()}, ${r.y.toLocaleString()}, ${r.w.toLocaleString()}, ${r.h.toLocaleString()}</span></td>
+                `;
+                resultsTable.appendChild(tr);
+
+                // Highlight best in visualizer
+                const zoneDivs = visualizer.querySelectorAll('.zone');
+                zoneDivs.forEach(div => {
+                    const label = div.querySelector('.zone-label').textContent;
+                    if (i === 0 && r.score > 0 && label === r.sheet) {
+                        div.classList.add('best-match');
+                    } else if (label === r.sheet) {
+                        div.classList.remove('best-match');
+                    }
+                });
+            });
+
+            mappingStatus.textContent = `Match: ${results[0].score > 0 ? results[0].sheet : 'None'}`;
+        });
+    </script>
+</body>
+</html>
