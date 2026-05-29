@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Tableau Data Extractor Extension</title>
+  <!-- Load Tableau Extensions API -->
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api@v1.10.0/lib/tableau.extensions.1.latest.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 10px; font-size: 13px; }
+    #status { margin-bottom: 10px; color: #666; }
+    button { padding: 8px 12px; cursor: pointer; background: #1a237e; color: white; border: none; border-radius: 4px; }
+    button:disabled { background: #ccc; }
+  </style>
+</head>
+<body>
+  <div id="status">Extension Initialized</div>
+  <button id="extractBtn">Extract Worksheet Data</button>
+  <div id="result" style="margin-top: 10px; max-height: 200px; overflow: auto; background: #eee; padding: 5px; font-family: monospace; font-size: 11px;"></div>
+
+  <script>
+    (function () {
+      tableau.extensions.initializeAsync().then(function () {
+        const status = document.getElementById('status');
+        const extractBtn = document.getElementById('extractBtn');
+        const result = document.getElementById('result');
+
+        status.textContent = 'Extension Ready. Dashboard: ' + tableau.extensions.dashboardContent.dashboard.name;
+
+        extractBtn.addEventListener('click', async function () {
+            extractBtn.disabled = true;
+            status.textContent = 'Extracting data...';
+            result.textContent = '';
+            
+            let combinedCsv = "";
+            const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
+            
+            for (const sheet of worksheets) {
+                try {
+                    status.textContent = 'Extracting ' + sheet.name + '...';
+                    
+                    // The "New Approach" from the documentation linked by the user:
+                    // Using getSummaryDataReaderAsync() instead of getSummaryDataAsync()
+                    const reader = await sheet.getSummaryDataReaderAsync();
+                    const dataTable = await reader.getAllPagesAsync();
+                    await reader.releaseAsync();
+                    
+                    combinedCsv += '=== Sheet: ' + sheet.name + ' ===\n';
+                    const columns = dataTable.columns.map(c => c.fieldName).join(',');
+                    combinedCsv += columns + '\n';
+                    
+                    dataTable.data.forEach(row => {
+                        const rowStr = row.map(cell => {
+                            let val = cell.formattedValue !== undefined ? cell.formattedValue : cell.value;
+                            if (val === null) val = '';
+                            val = String(val).replace(/"/g, '""');
+                            return '"' + val + '"';
+                        }).join(',');
+                        combinedCsv += rowStr + '\n';
+                    });
+                    combinedCsv += '\n';
+                } catch (err) {
+                    console.error('Error on sheet ' + sheet.name + ':', err);
+                    combinedCsv += '=== Sheet: ' + sheet.name + ' (Failed) ===\n\n';
+                }
+            }
+            
+            status.textContent = 'Data extracted successfully!';
+            result.textContent = combinedCsv;
+            extractBtn.disabled = false;
+            
+            // Send back to the main app if needed
+            // parent.postMessage({ type: 'TABLEAU_DATA', data: combinedCsv }, '*');
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

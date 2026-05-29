@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container d-flex align-items-center justify-content-center min-vh-100 pb-5">
+    <div class="row w-100 justify-content-center">
+        <div class="col-md-5 col-lg-4">
+            <div class="text-center mb-5">
+                <div class="logo-box bg-primary rounded-4 p-3 d-inline-flex mb-3 shadow-lg">
+                    <i data-feather="box" class="text-white" style="width: 32px; height: 32px;"></i>
+                </div>
+                <h1 class="h3 fw-bold mb-1" style="font-family: 'Outfit';">Welcome Back</h1>
+                <p class="text-muted small">Log in to your Tableau Export Studio</p>
+            </div>
+
+            <div class="card border-0 shadow-xl rounded-5 overflow-hidden">
+                <div class="card-body p-4 p-lg-5">
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                    {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} rounded-4 border-0 small mb-4 py-3 px-4 shadow-sm"
+                        role="alert">
+                        <i data-feather="alert-circle" class="me-2" style="width: 14px;"></i>
+                        {{ message }}
+                    </div>
+                    {% endfor %}
+                    {% endif %}
+                    {% endwith %}
+
+                    <div class="d-flex mb-4 bg-light rounded-pill p-1">
+                        <button type="button" class="btn btn-sm flex-grow-1 rounded-pill py-2 auth-tab active"
+                            data-target="creds">Credentials</button>
+                        <button type="button" class="btn btn-sm flex-grow-1 rounded-pill py-2 auth-tab"
+                            data-target="pat">PAT Token</button>
+                    </div>
+
+                    <form action="{{ url_for('login') }}" method="POST" id="loginForm">
+                        <div class="mb-4">
+                            <label class="form-label small fw-bold text-uppercase opacity-75">Server URL</label>
+                            <div class="input-group-custom">
+                                <input type="url" name="server_url" class="form-control select-modern"
+                                    placeholder="e.g. https://online.tableau.com"
+                                    value="https://us-east-1.online.tableau.com" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label small fw-bold text-uppercase opacity-75">Site ID</label>
+                            <div class="input-group-custom">
+                                <input type="text" name="site_id" class="form-control select-modern"
+                                    placeholder="e.g. my-site-id" value="lasexihe-2b1e27ff34" required>
+                            </div>
+                            <div class="text-muted xx-small mt-2 px-1">
+                                <i data-feather="info" style="width: 10px; height: 10px;"></i>
+                                The site ID found in your Tableau URL
+                            </div>
+                        </div>
+
+                        <!-- Credentials Fields -->
+                        <div id="credsFields">
+                            <div class="mb-4">
+                                <label class="form-label small fw-bold text-uppercase opacity-75">Username</label>
+                                <div class="input-group-custom">
+                                    <input type="text" name="username" id="usernameInput"
+                                        class="form-control select-modern" placeholder="Enter your username" required>
+                                </div>
+                            </div>
+
+                            <div class="mb-5">
+                                <label class="form-label small fw-bold text-uppercase opacity-75">Password</label>
+                                <div class="input-group-custom">
+                                    <input type="password" name="password" id="passwordInput"
+                                        class="form-control select-modern" placeholder="••••••••" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PAT Fields (Initially Hidden) -->
+                        <div id="patFields" style="display: none;">
+                            <div class="mb-4">
+                                <label class="form-label small fw-bold text-uppercase opacity-75">Token Name</label>
+                                <div class="input-group-custom">
+                                    <input type="text" name="token_name" id="tokenNameInput"
+                                        class="form-control select-modern" placeholder="Enter token name">
+                                </div>
+                            </div>
+
+                            <div class="mb-5">
+                                <label class="form-label small fw-bold text-uppercase opacity-75">Token Key</label>
+                                <div class="input-group-custom">
+                                    <input type="password" name="token_key" id="tokenKeyInput"
+                                        class="form-control select-modern" placeholder="Enter token key">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg btn-modern-shiny py-3">
+                                <span>Sign In to Dashboard</span>
+                                <i data-feather="arrow-right" class="ms-2"></i>
+                            </button>
+                        </div>
+                    </form>
+
+                    <script>
+                        document.querySelectorAll('.auth-tab').forEach(tab => {
+                            tab.addEventListener('click', () => {
+                                // Toggle active class
+                                document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active', 'btn-primary'));
+                                document.querySelectorAll('.auth-tab').forEach(t => t.classList.add('btn-light'));
+                                tab.classList.remove('btn-light');
+                                tab.classList.add('active', 'btn-primary');
+
+                                // Toggle fields
+                                if (tab.dataset.target === 'pat') {
+                                    document.getElementById('credsFields').style.display = 'none';
+                                    document.getElementById('patFields').style.display = 'block';
+                                    document.getElementById('usernameInput').required = false;
+                                    document.getElementById('passwordInput').required = false;
+                                    document.getElementById('tokenNameInput').required = true;
+                                    document.getElementById('tokenKeyInput').required = true;
+                                } else {
+                                    document.getElementById('patFields').style.display = 'none';
+                                    document.getElementById('credsFields').style.display = 'block';
+                                    document.getElementById('usernameInput').required = true;
+                                    document.getElementById('passwordInput').required = true;
+                                    document.getElementById('tokenNameInput').required = false;
+                                    document.getElementById('tokenKeyInput').required = false;
+                                }
+                            });
+                        });
+
+                        // Initialize tabs
+                        document.querySelector('.auth-tab[data-target="creds"]').classList.add('btn-primary');
+                        document.querySelector('.auth-tab[data-target="pat"]').classList.add('btn-light');
+                    </script>
+                </div>
+            </div>
+
+            <div class="text-center mt-5">
+                <p class="text-muted small">Powered by <span class="fw-bold">Insights Snapshot</span></p>
+                <div class="d-flex justify-content-center gap-3">
+                    <a href="#" class="text-decoration-none text-muted xx-small">Support</a>
+                    <a href="#" class="text-decoration-none text-muted xx-small">Privacy Policy</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Special override for login content area to center it */
+    .content-area {
+        margin-left: 0 !important;
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }
+
+    .sidebar {
+        display: none !important;
+    }
+</style>
+{% endblock %}
