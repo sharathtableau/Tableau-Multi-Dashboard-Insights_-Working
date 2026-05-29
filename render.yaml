@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: tableau-dashboard-app
+    env: python
+    plan: free
+    pythonVersion: "3.11.9"
+            buildCommand: "apt-get update && apt-get install -y google-chrome-stable && pip install -r requirements.txt"
+    startCommand: gunicorn main:app

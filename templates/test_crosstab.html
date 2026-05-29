@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crosstab Data Fetching Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #1a237e;
+            border-bottom: 3px solid #4a90d9;
+            padding-bottom: 10px;
+        }
+        .input-group {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #2c3e50;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        input[type="text"]:focus {
+            border-color: #4a90d9;
+            outline: none;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .result-box {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            border: 2px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 2px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 2px solid #bee5eb;
+            color: #0c5460;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .view-list {
+            list-style: none;
+            padding: 0;
+        }
+        .view-item {
+            background: #f8f9fa;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 5px;
+            border-left: 4px solid #4a90d9;
+        }
+        .view-name {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .view-meta {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            background: #6c757d;
+            color: white;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+        .badge-success {
+            background: #28a745;
+        }
+        .badge-warning {
+            background: #ffc107;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Crosstab Data Fetching Test</h1>
+        <p>Test if the application can fetch CSV/crosstab data from all sheets in your workbook.</p>
+        
+        <div class="input-group">
+            <label for="workbookId">Workbook ID:</label>
+            <input type="text" id="workbookId" placeholder="Enter your workbook ID (e.g., abc123-def456)">
+            <small style="color: #6c757d; display: block; margin-top: 8px;">
+                💡 Tip: Find the workbook ID in your browser's network tab when selecting a dashboard, or check Flask logs
+            </small>
+        </div>
+        
+        <button id="testBtn" onclick="runTest()">🚀 Run Test</button>
+        
+        <div id="loading" style="display: none; text-align: center; padding: 20px;">
+            <div style="font-size: 24px;">⏳</div>
+            <p>Testing crosstab export... This may take a few seconds.</p>
+        </div>
+        
+        <div id="result" class="result-box"></div>
+    </div>
+
+    <script>
+        async function runTest() {
+            const workbookId = document.getElementById('workbookId').value.trim();
+            
+            if (!workbookId) {
+                alert('Please enter a workbook ID');
+                return;
+            }
+            
+            const testBtn = document.getElementById('testBtn');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+            
+            // Reset UI
+            result.style.display = 'none';
+            testBtn.disabled = true;
+            loading.style.display = 'block';
+            
+            try {
+                const response = await fetch(`/api/test_crosstab/${workbookId}`);
+                const data = await response.json();
+                
+                loading.style.display = 'none';
+                testBtn.disabled = false;
+                result.style.display = 'block';
+                
+                if (data.success) {
+                    result.className = 'result-box success';
+                    result.innerHTML = `
+                        <h2 style="margin-top: 0;">✅ Success! Data Retrieved</h2>
+                        
+                        <div class="stats">
+                            <div class="stat-card">
+                                <div class="stat-value">${data.views_found}</div>
+                                <div class="stat-label">Views Found</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value">${data.sheet_count}</div>
+                                <div class="stat-label">Sheets with Data</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value">${(data.csv_length / 1024).toFixed(2)} KB</div>
+                                <div class="stat-label">CSV Size</div>
+                            </div>
+                        </div>
+                        
+                        <h3>Views in Workbook:</h3>
+                        <ul class="view-list">
+                            ${data.views.map(v => `
+                                <li class="view-item">
+                                    <div class="view-name">
+                                        ${v.name}
+                                        <span class="badge ${v.sheetType === 'worksheet' ? 'badge-success' : 'badge-warning'}">
+                                            ${v.sheetType}
+                                        </span>
+                                    </div>
+                                    <div class="view-meta">
+                                        ID: ${v.id}<br>
+                                        Content URL: ${v.contentUrl || 'N/A'}
+                                    </div>
+                                </li>
+                            `).join('')}
+                        </ul>
+                        
+                        <h3>CSV Preview (first 2000 chars):</h3>
+                        <pre>${escapeHtml(data.csv_preview || 'No preview available')}</pre>
+                    `;
+                } else {
+                    result.className = 'result-box error';
+                    result.innerHTML = `
+                        <h2 style="margin-top: 0;">❌ No Data Retrieved</h2>
+                        <p><strong>Message:</strong> ${data.message || 'Unknown error'}</p>
+                        <p><strong>Error:</strong> ${data.error || 'Check server logs for details'}</p>
+                        
+                        <div class="stats">
+                            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                                <div class="stat-value">${data.views_found}</div>
+                                <div class="stat-label">Views Found</div>
+                            </div>
+                            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                                <div class="stat-value">0</div>
+                                <div class="stat-label">Sheets with Data</div>
+                            </div>
+                        </div>
+                        
+                        <h3>Views in Workbook:</h3>
+                        <ul class="view-list">
+                            ${data.views.map(v => `
+                                <li class="view-item">
+                                    <div class="view-name">
+                                        ${v.name}
+                                        <span class="badge badge-warning">${v.sheetType}</span>
+                                    </div>
+                                    <div class="view-meta">
+                                        ID: ${v.id}<br>
+                                        Content URL: ${v.contentUrl || 'N/A'}
+                                    </div>
+                                </li>
+                            `).join('')}
+                        </ul>
+                        
+                        <p style="margin-top: 20px;">
+                            <strong>Next Steps:</strong> Check the Flask server logs for detailed error messages.
+                            The enhanced logging should show exactly which endpoint failed and why.
+                        </p>
+                    `;
+                }
+                
+            } catch (error) {
+                loading.style.display = 'none';
+                testBtn.disabled = false;
+                result.style.display = 'block';
+                result.className = 'result-box error';
+                result.innerHTML = `
+                    <h2 style="margin-top: 0;">❌ Request Failed</h2>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <p>Make sure the Flask server is running and you're logged in to Tableau.</p>
+                `;
+            }
+        }
+        
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        // Auto-fill workbook ID from URL parameter if present
+        const urlParams = new URLSearchParams(window.location.search);
+        const wbId = urlParams.get('workbook_id');
+        if (wbId) {
+            document.getElementById('workbookId').value = wbId;
+        }
+    </script>
+</body>
+</html>

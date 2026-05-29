@@ -1,0 +1,2187 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<!-- Data Insights Slide Panel -->
+<style>
+    /* ── Layout containment: prevent data tables from blowing out the grid ──
+       Bootstrap flex columns default to min-width:auto which lets wide
+       content expand the column.  These rules clamp everything to the
+       allocated column width so tables scroll rather than stretch the page. */
+
+    /* Every Bootstrap column in the workbook grid is a flex child —
+       min-width:0 is the key: it lets the column shrink to its grid
+       allocation instead of growing to fit content. */
+    .col-lg-8 .row > [class*="col-"] {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* The card itself must clip anything that escapes the card-body */
+    .workbook-card {
+        overflow: hidden !important;
+        min-width: 0;
+    }
+
+    /* card-body is the direct parent of all dynamic content */
+    .workbook-card .card-body {
+        overflow: hidden;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* preview and zone areas */
+    .preview-section,
+    .zone-inline-area {
+        overflow: hidden;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+        width: 100%;
+    }
+
+    /* zone-result divs (injected dynamically) */
+    [id^="zone-result-"],
+    [id^="zone-btn-wrap-"],
+    [id^="zone-insights-area-"],
+    [id^="zone-insights-btn-"] {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        box-sizing: border-box;
+    }
+
+    /* Table scroll containers: horizontal scroll inside, never outside */
+    .zone-inline-area .table-scroll-wrap,
+    [id^="zone-result-"] div[style*="overflow"] {
+        overflow-x: auto !important;
+        overflow-y: auto;
+        max-width: 100%;
+    }
+
+    /* Tables themselves never force their parent wider */
+    [id^="zone-result-"] table {
+        min-width: 100%;
+        max-width: none;      /* allow horizontal scroll but do NOT cap columns */
+        table-layout: auto;
+    }
+
+    .data-panel-backdrop {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.3); z-index: 1040;
+        opacity: 0; visibility: hidden;
+        transition: opacity 0.3s, visibility 0.3s;
+    }
+    .data-panel-backdrop.open { opacity: 1; visibility: visible; }
+    .data-panel {
+        position: fixed; top: 0; right: -520px; bottom: 0;
+        width: 500px; max-width: 90vw;
+        background: #fff; z-index: 1050;
+        box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+        transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex; flex-direction: column;
+    }
+    .data-panel.open { right: 0; }
+    .data-panel-header {
+        padding: 16px 20px;
+        background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+        color: white; display: flex; align-items: center;
+        justify-content: space-between; flex-shrink: 0;
+    }
+    .data-panel-header h5 { margin: 0; font-weight: 700; font-size: 16px; }
+    .data-panel-close {
+        background: rgba(255,255,255,0.15); border: none; color: white;
+        width: 32px; height: 32px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; transition: background 0.2s;
+    }
+    .data-panel-close:hover { background: rgba(255,255,255,0.3); }
+    .data-panel-body {
+        flex: 1; overflow-y: auto; padding: 16px 20px;
+    }
+    .data-panel-stats {
+        display: flex; gap: 12px; margin-bottom: 16px;
+    }
+    .data-panel-stat {
+        flex: 1; padding: 10px 14px; border-radius: 10px;
+        background: #f8f9fa; border: 1px solid #e9ecef;
+    }
+    .data-panel-stat .label { font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; }
+    .data-panel-stat .value { font-size: 18px; font-weight: 700; color: #1a237e; }
+</style>
+
+<div class="data-panel-backdrop" id="dataPanelBackdrop" onclick="closeDataPanel()"></div>
+<div class="data-panel" id="dataPanel">
+    <div class="data-panel-header">
+        <div class="d-flex align-items-center gap-2">
+            <i data-feather="database" style="width: 20px; height: 20px;"></i>
+            <h5>Data Insights</h5>
+        </div>
+        <button class="data-panel-close" onclick="closeDataPanel()">
+            <i data-feather="x" style="width: 18px; height: 18px;"></i>
+        </button>
+    </div>
+    <div class="data-panel-body" id="dataPanelBody">
+        <!-- AI Insights Section -->
+        <div id="dataPanelInsights" style="margin-bottom: 16px;">
+            <button onclick="generateDataInsights()" id="generateInsightsBtn" 
+                    style="width: 100%; padding: 10px 16px; border: none; border-radius: 10px; 
+                           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                           color: white; font-weight: 600; font-size: 13px; cursor: pointer; 
+                           display: flex; align-items: center; justify-content: center; gap: 8px;
+                           transition: opacity 0.2s, transform 0.1s;">
+                <i data-feather="zap" style="width: 16px; height: 16px;"></i>
+                Generate AI Insights
+            </button>
+            <div id="insightsResult" style="display: none; margin-top: 12px; padding: 16px; 
+                 background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); 
+                 border-radius: 10px; border-left: 4px solid #7c3aed;">
+            </div>
+        </div>
+        <div class="data-panel-stats" id="dataPanelStats"></div>
+        <div id="dataPanelTables"></div>
+    </div>
+</div>
+
+<!-- Load Tableau Embedding API v3 locally instead of from the public CDN.
+     This avoids 403 / AccessDenied errors when embedding.tableauusercontent.com
+     is blocked by network or firewall policies.
+     Make sure you download tableau.embedding.3.latest.min.js from a network
+     that can access Tableau's CDN and place it under:
+       static/js/tableau.embedding.3.latest.min.js
+-->
+<script type="module" src="{{ url_for('static', filename='js/tableau.embedding.3.latest.min.js') }}"></script>
+<script>
+function openDataPanel() {
+    document.getElementById('dataPanelBackdrop').classList.add('open');
+    document.getElementById('dataPanel').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    feather.replace();
+}
+function closeDataPanel() {
+    document.getElementById('dataPanelBackdrop').classList.remove('open');
+    document.getElementById('dataPanel').classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+function parseCSVLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+            inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+        } else {
+            current += ch;
+        }
+    }
+    result.push(current.trim());
+    return result;
+}
+
+function showDataPanel(workbookIndex) {
+    if (!window._csvPanelDataMap || !window._csvPanelDataMap[workbookIndex]) {
+        return;
+    }
+    const data = window._csvPanelDataMap[workbookIndex];
+    window._csvPanelData = data; // Set current active data for insights
+    const rawText = data.preview;
+    const totalRows = data.rows;
+    const lines = rawText.split('\n');
+
+    // Count sheets
+    let sheetCount = 0;
+    lines.forEach(l => { if (l.trim().startsWith('=== Sheet:')) sheetCount++; });
+    if (sheetCount === 0) sheetCount = 1;
+
+    // Stats
+    document.getElementById('dataPanelStats').innerHTML = `
+        <div class="data-panel-stat">
+            <div class="label">Total Rows</div>
+            <div class="value">${totalRows}</div>
+        </div>
+        <div class="data-panel-stat">
+            <div class="label">Sheets</div>
+            <div class="value">${sheetCount}</div>
+        </div>`;
+
+    // Parse sheets
+    let html = '';
+    let currentSheet = '';
+    let currentRows = [];
+
+    function buildTable(sheetName, rows) {
+        if (rows.length === 0) return '';
+        let t = '';
+        if (sheetName) {
+            t += '<div style="padding: 10px 16px; background: linear-gradient(90deg, #4a90d9, #357abd); color: white; font-weight: 600; font-size: 13px; border-radius: 10px 10px 0 0; margin-top: 12px; display: flex; align-items: center; gap: 8px;">';
+            t += '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> ' + sheetName + '</div>';
+        }
+        t += '<div style="overflow: auto; border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 10px 10px; margin-bottom: 4px;">';
+        t += '<table class="table table-sm table-striped table-hover mb-0" style="font-size: 12px;">';
+        const headerCols = parseCSVLine(rows[0]);
+        t += '<thead><tr style="background: #f1f3f5; position: sticky; top: 0; z-index: 1;">';
+        headerCols.forEach(h => {
+            t += '<th style="padding: 8px 12px; font-weight: 700; color: #2c3e50; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; border-bottom: 2px solid #dee2e6;">' + h + '</th>';
+        });
+        t += '</tr></thead><tbody>';
+        for (let r = 1; r < rows.length; r++) {
+            if (rows[r].startsWith('...')) {
+                t += '<tr><td colspan="' + headerCols.length + '" style="text-align: center; color: #6c757d; padding: 8px; font-style: italic; font-size: 11px;">' + rows[r] + '</td></tr>';
+            } else {
+                const dataCols = parseCSVLine(rows[r]);
+                t += '<tr>';
+                dataCols.forEach(c => {
+                    const isNum = !isNaN(c) && c !== '';
+                    t += '<td style="padding: 6px 12px; white-space: nowrap; color: #495057;' + (isNum ? ' text-align: right; font-variant-numeric: tabular-nums;' : '') + '">' + c + '</td>';
+                });
+                t += '</tr>';
+            }
+        }
+        t += '</tbody></table></div>';
+        return t;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('=== Sheet:') && line.endsWith('===')) {
+            if (currentRows.length > 0) html += buildTable(currentSheet, currentRows);
+            currentSheet = line.replace(/^=== Sheet:\s*/, '').replace(/\s*===$/, '');
+            currentRows = [];
+        } else if (line) {
+            currentRows.push(line);
+        }
+    }
+    if (currentRows.length > 0) html += buildTable(currentSheet, currentRows);
+
+    document.getElementById('dataPanelTables').innerHTML = html;
+    openDataPanel();
+}
+
+async function generateDataInsights() {
+    if (!window._csvPanelData) return;
+    
+    const btn = document.getElementById('generateInsightsBtn');
+    const resultDiv = document.getElementById('insightsResult');
+    
+    // Show loading state
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span> Analyzing data...';
+    btn.style.opacity = '0.7';
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div style="text-align: center; color: #7c3aed; font-size: 13px;"><div class="spinner-border spinner-border-sm me-2" role="status"></div> Gemini is analyzing your data...</div>';
+    
+    try {
+        // ── Collect live zone crosstab CSV from all loaded workbooks ────────────
+        // Each _zoneResultMap[index] now has a pre-built combinedCsv field
+        // (multi-sheet CSV with section headers) or legacy columns/rows fields.
+        let zoneCsvParts = [];
+        if (window._zoneResultMap) {
+            Object.entries(window._zoneResultMap).forEach(([key, zd]) => {
+                if (!/^\d+$/.test(key)) return;  // only plain-index keys
+                if (zd.combinedCsv) {
+                    zoneCsvParts.push(zd.combinedCsv);
+                } else if (zd.columns && zd.columns.length) {
+                    const header = zd.columns.join(',');
+                    const dataLines = (zd.rows || []).map(row =>
+                        zd.columns.map(c => {
+                            const v = (row[c] !== undefined && row[c] !== null) ? String(row[c]) : '';
+                            return (v.includes(',') || v.includes('"') || v.includes('\n'))
+                                ? '"' + v.replace(/"/g, '""') + '"' : v;
+                        }).join(',')
+                    );
+                    zoneCsvParts.push(`=== Sheet: ${zd.sheetName || 'Data'} ===`);
+                    zoneCsvParts.push(header, ...dataLines);
+                }
+            });
+        }
+        const zoneDataCsv = zoneCsvParts.join('\n');
+
+        // Prefer zone crosstab CSV (live Selenium data) over old Embedding-API CSV.
+        // If both are present, combine them so the AI has maximum context.
+        const embeddingCsv = window._csvPanelData.preview || '';
+        const combinedCsv  = zoneDataCsv
+            ? (zoneDataCsv + (embeddingCsv ? '\n\n--- Additional Sheet Data ---\n' + embeddingCsv : ''))
+            : embeddingCsv;
+
+        const response = await fetch('/api/data_insights', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                csv_data: combinedCsv,
+                png_filename: window._csvPanelData.png_filename,
+                // Send cropped image so AI focuses on the selected area
+                cropped_filename: window._csvPanelData.cropped_filename || '',
+                workbook_index: window._csvPanelData.workbook_index != null ? window._csvPanelData.workbook_index : null
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.insights) {
+            // Render markdown-like formatting
+            let formatted = data.insights
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/^- /gm, '• ')
+                .split('\n')
+                .filter(l => l.trim())
+                .map(line => {
+                    line = line.trim();
+                    if (line.startsWith('• ')) {
+                        return '<div style="margin: 6px 0; padding-left: 8px; font-size: 13px; line-height: 1.5; color: #374151;">' + line + '</div>';
+                    } else if (line.match(/^[A-Z]/) && line.length < 80 && !line.startsWith('•')) {
+                        return '<div style="font-weight: 700; font-size: 14px; color: #7c3aed; margin-bottom: 8px; margin-top: 4px;">' + line + '</div>';
+                    }
+                    return '<div style="font-size: 13px; color: #374151; margin: 4px 0; line-height: 1.5;">' + line + '</div>';
+                })
+                .join('');
+            
+            resultDiv.innerHTML = '<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 11px; color: #7c3aed; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> AI-Generated Insights</div>' + formatted;
+        } else {
+            resultDiv.innerHTML = '<div style="color: #dc3545; font-size: 13px;">Failed to generate insights: ' + (data.error || 'Unknown error') + '</div>';
+        }
+    } catch (err) {
+        resultDiv.innerHTML = '<div style="color: #dc3545; font-size: 13px;">Error: ' + err.message + '</div>';
+    }
+    
+    // Reset button
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Regenerate Insights';
+    btn.style.opacity = '1';
+}
+
+// ── Zone Data: fetch ALL matched sheets and combine into one table ─────────────
+// Fetches each matched sheet sequentially, merges sections, renders one view.
+function fetchZoneData(index) {
+    const meta = (window._zoneMetaMap || {})[index];
+    if (!meta) return;
+
+    const sheets = (meta.matchedSheets && meta.matchedSheets.length > 0)
+        ? meta.matchedSheets
+        : (meta.matchedSheet ? [meta.matchedSheet] : []);
+
+    if (!sheets.length) return;
+
+    const btnWrap  = document.getElementById(`zone-btn-wrap-${index}`);
+    const resultEl = document.getElementById(`zone-result-${index}`);
+    if (!resultEl) return;
+
+    // Hide button, show spinner
+    if (btnWrap) btnWrap.style.display = 'none';
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `
+        <div class="d-flex align-items-center gap-2 text-muted" style="font-size:12px;">
+            <div class="spinner-border spinner-border-sm text-info" style="width:.9rem;height:.9rem;" role="status"></div>
+            Fetching data for ${sheets.length} sheet(s) from Tableau Server&hellip;
+        </div>`;
+
+    // Helper: fetch one sheet via zone-crosstab API
+    function fetchSheet(sheetName) {
+        return fetch('/api/zone-crosstab', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workbook_index: parseInt(index, 10), sheet_name: sheetName })
+        })
+        .then(r => r.text().then(txt => {
+            if (!txt || !txt.trim()) throw new Error('Empty response');
+            try { return JSON.parse(txt); } catch(e) { throw new Error('JSON error: ' + e.message); }
+        }));
+    }
+
+    // Fetch all sheets sequentially (avoids hammering the server / driver)
+    const results = [];  // { sheetName, d (API response or error) }
+    let chain = Promise.resolve();
+    sheets.forEach(sheet => {
+        chain = chain.then(() => fetchSheet(sheet)
+            .then(d  => results.push({ sheetName: sheet, d, ok: !d.error }))
+            .catch(e => results.push({ sheetName: sheet, d: null, ok: false, errMsg: e.message }))
+        );
+    });
+
+    chain.then(() => {
+        // ── Combine all successful results ──────────────────────────────────────
+        const allSheetsData = [];  // { sheetName, columns, rows, source, method, total_rows }
+        let combinedCsvParts = [];
+
+        results.forEach(r => {
+            if (!r.ok || !r.d) return;
+            const d = r.d;
+            allSheetsData.push({
+                sheetName:  r.sheetName,
+                columns:    d.columns || [],
+                rows:       d.rows    || [],
+                source:     d.source  || 'unknown',
+                method:     d.method  || '',
+                total_rows: d.total_rows || 0,
+            });
+
+            // Build CSV section for this sheet
+            const csvHeader = (d.columns || []).join(',');
+            const csvRows = (d.rows || []).map(row =>
+                (d.columns || []).map(c => {
+                    const v = (row[c] !== undefined && row[c] !== null) ? String(row[c]) : '';
+                    return (v.includes(',') || v.includes('"') || v.includes('\n'))
+                        ? '"' + v.replace(/"/g, '""') + '"' : v;
+                }).join(',')
+            );
+            combinedCsvParts.push(`=== Sheet: ${r.sheetName} ===`);
+            combinedCsvParts.push(csvHeader);
+            combinedCsvParts.push(...csvRows);
+        });
+
+        const combinedCsv = combinedCsvParts.join('\n');
+
+        // ── Store combined result in _zoneResultMap ─────────────────────────────
+        if (!window._zoneResultMap) window._zoneResultMap = {};
+        window._zoneResultMap[index] = { allSheets: allSheetsData, combinedCsv, sheetName: sheets.join(', ') };
+
+        // ── Persist to session for PPT/insights use ─────────────────────────────
+        // Send each sheet's data to backend (last one wins for session csv_data,
+        // but the combinedCsv in _zoneResultMap is used for AI insights)
+        allSheetsData.forEach(sd => {
+            fetch('/api/save-zone-csv', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    workbook_index: parseInt(index, 10),
+                    columns:        sd.columns,
+                    rows:           sd.rows,
+                    sheet_name:     sd.sheetName,
+                })
+            }).catch(e => console.warn('[zone-csv] save failed:', e));
+        });
+
+        // ── Handle all-failed case ──────────────────────────────────────────────
+        if (allSheetsData.length === 0) {
+            const errMsgs = results.map(r =>
+                `<div style="margin-bottom:4px;"><strong>${escHtmlZ(r.sheetName)}:</strong> ${escHtmlZ(r.errMsg || (r.d && r.d.error) || 'unknown error')}</div>`
+            ).join('');
+            resultEl.innerHTML = `
+                <div class="alert alert-danger py-2 px-3 mb-0 rounded-3" style="font-size:12px;">
+                    <strong>Failed to load data:</strong>
+                    <div class="mt-2">${errMsgs}</div>
+                    <button class="btn btn-sm btn-outline-secondary mt-2" onclick="retryZoneData(${index})" style="font-size:11px;">Retry</button>
+                </div>`;
+            return;
+        }
+
+        // ── Render combined sections ────────────────────────────────────────────
+        const isLive = allSheetsData.some(s => s.source === 'tableau_server');
+        const srcBadge = isLive
+            ? '<span style="background:rgba(25,135,84,.15);border:1px solid rgba(25,135,84,.35);border-radius:10px;padding:2px 8px;font-size:10px;color:#198754;font-weight:600;">🟢 Live Tableau</span>'
+            : '<span style="background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.35);border-radius:10px;padding:2px 8px;font-size:10px;color:#856404;font-weight:600;">🟡 Reconstructed</span>';
+
+        // Show any partial errors
+        const failedSheets = results.filter(r => !r.ok);
+        const partialWarn = failedSheets.length > 0
+            ? `<div style="font-size:10px;color:#856404;margin-top:4px;">⚠ Could not load: ${failedSheets.map(r=>escHtmlZ(r.sheetName)).join(', ')}</div>`
+            : '';
+
+        // Build per-sheet table sections
+        let sectionsHtml = '';
+        allSheetsData.forEach((sd, si) => {
+            const headerBg = si === 0 ? 'rgba(13,202,240,.12)' : 'rgba(102,126,234,.12)';
+            const headerCol = si === 0 ? '#0dcaf0' : '#667eea';
+            const cols = sd.columns;
+            const th = cols.map(c =>
+                `<th style="padding:5px 10px;white-space:nowrap;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;background:#f1f3f5;position:sticky;top:0;z-index:1;">${escHtmlZ(c)}</th>`
+            ).join('');
+            const tb = sd.rows.map(row =>
+                '<tr>' + cols.map(c => {
+                    const v = (row[c] !== undefined && row[c] !== null) ? String(row[c]) : '';
+                    const isNum = v !== '' && !isNaN(v);
+                    return `<td style="padding:4px 10px;white-space:nowrap;font-size:11px;${isNum?'text-align:right;':''}">${escHtmlZ(v)}</td>`;
+                }).join('') + '</tr>'
+            ).join('');
+            const moreMsg = sd.total_rows > sd.rows.length
+                ? `<span class="text-muted ms-1" style="font-size:10px;">(${sd.total_rows - sd.rows.length} more — ↓ CSV)</span>` : '';
+
+            sectionsHtml += `
+                <div style="border-top:1px solid rgba(0,0,0,.06);${si===0?'':'margin-top:0;'}">
+                    <div style="background:${headerBg};padding:5px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(0,0,0,.06);">
+                        <span style="font-size:11px;font-weight:700;color:${headerCol};">📊 ${escHtmlZ(sd.sheetName)}</span>
+                        <span class="text-muted" style="font-size:10px;">${sd.rows.length} of ${sd.total_rows} rows${sd.method ? ' · ' + escHtmlZ(sd.method) : ''}</span>
+                        ${moreMsg}
+                    </div>
+                    <div class="table-scroll-wrap" style="max-height:220px;overflow-x:auto;overflow-y:auto;max-width:100%;">
+                        <table class="table table-sm table-hover table-bordered mb-0" style="font-size:11px;min-width:100%;table-layout:auto;">
+                            <thead><tr>${th}</tr></thead>
+                            <tbody>${tb}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        });
+
+        resultEl.innerHTML = `
+            <div style="border:1px solid rgba(13,202,240,.25);border-radius:8px;overflow:hidden;width:100%;max-width:100%;min-width:0;box-sizing:border-box;">
+                <div style="background:rgba(13,202,240,.07);padding:7px 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+                    <div class="d-flex align-items-center gap-2" style="font-size:12px;">
+                        ${srcBadge}
+                        <span class="text-muted">${allSheetsData.length} sheet(s) loaded</span>
+                    </div>
+                    <button class="btn btn-sm btn-outline-success" onclick="downloadZoneCsv(${index})"
+                            style="font-size:11px;padding:2px 8px;">↓ CSV</button>
+                </div>
+                ${partialWarn ? `<div style="padding:4px 12px;">${partialWarn}</div>` : ''}
+                ${sectionsHtml}
+            </div>
+            <div id="zone-insights-area-${index}" class="mt-2"></div>
+            <button class="btn btn-sm w-100 rounded-3 mt-2"
+                    id="zone-insights-btn-${index}"
+                    onclick="generateZoneInsights(${index})"
+                    style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:13px;font-weight:600;padding:8px 0;border:none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                AI Insights — Image + Data
+            </button>`;
+    });
+}
+
+// ── Inline AI Insights per workbook ───────────────────────────────────────────
+async function generateZoneInsights(index) {
+    const btn       = document.getElementById(`zone-insights-btn-${index}`);
+    const areaEl    = document.getElementById(`zone-insights-area-${index}`);
+    if (!btn || !areaEl) return;
+
+    const zr  = (window._zoneResultMap || {})[index];
+    const meta = (window._zoneMetaMap  || {})[index];
+    const pd  = (window._csvPanelDataMap || {})[index];
+
+    const csvData     = (zr && zr.combinedCsv) || (pd && pd.preview) || '';
+    // Prefer cropped image from either source (meta stores it from crop response; pd from panel)
+    const croppedFile = (meta && meta.croppedFilename) || (pd && pd.cropped_filename) || '';
+    const pngFile     = (meta && meta.pngFilename)     || (pd && pd.png_filename)     || '';
+    const wbIndex     = meta ? meta.workbookIndex : index;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" style="width:.8rem;height:.8rem;" role="status"></span> Generating AI Insights…';
+
+    areaEl.style.display = 'block';
+    areaEl.innerHTML = `<div style="text-align:center;color:#7c3aed;font-size:12px;padding:8px 0;">
+        <div class="spinner-border spinner-border-sm me-2" style="width:.8rem;height:.8rem;" role="status"></div>
+        Gemini is analysing your image and data…</div>`;
+
+    try {
+        const resp = await fetch('/api/data_insights', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                csv_data:         csvData,
+                png_filename:     pngFile,
+                cropped_filename: croppedFile,
+                workbook_index:   parseInt(wbIndex, 10),
+            })
+        });
+        const data = await resp.json();
+
+        if (data.success && data.insights) {
+            let formatted = data.insights
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/^- /gm, '• ')
+                .split('\n').filter(l => l.trim())
+                .map(line => {
+                    line = line.trim();
+                    if (line.startsWith('• '))
+                        return `<div style="margin:5px 0;padding-left:8px;font-size:12px;line-height:1.5;color:#374151;">${line}</div>`;
+                    if (line.match(/^[A-Z]/) && line.length < 80 && !line.startsWith('•'))
+                        return `<div style="font-weight:700;font-size:13px;color:#7c3aed;margin:6px 0 4px;">${line}</div>`;
+                    return `<div style="font-size:12px;color:#374151;margin:3px 0;line-height:1.5;">${line}</div>`;
+                }).join('');
+
+            areaEl.innerHTML = `
+                <div style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-radius:8px;border-left:3px solid #7c3aed;padding:12px 14px;">
+                    <div style="font-size:10px;color:#7c3aed;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+                        ⚡ AI Insights — Image + Data Combined
+                    </div>
+                    ${formatted}
+                </div>`;
+        } else {
+            areaEl.innerHTML = `<div class="alert alert-warning py-2 px-3 rounded-3" style="font-size:12px;">
+                ${escHtmlZ(data.error || 'Insights unavailable')}</div>`;
+        }
+    } catch(e) {
+        areaEl.innerHTML = `<div class="alert alert-danger py-2 px-3 rounded-3" style="font-size:12px;">Error: ${escHtmlZ(e.message)}</div>`;
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Regenerate AI Insights';
+}
+
+function retryZoneData(index) {
+    const btnWrap  = document.getElementById(`zone-btn-wrap-${index}`);
+    const resultEl = document.getElementById(`zone-result-${index}`);
+    if (resultEl) resultEl.style.display = 'none';
+    if (btnWrap)  btnWrap.style.display  = 'block';
+    feather.replace();
+}
+
+function downloadZoneCsv(index) {
+    const zr = (window._zoneResultMap || {})[index];
+    if (!zr) return;
+
+    // Use pre-built combinedCsv if available; otherwise build from legacy single-sheet format
+    let csvContent = '';
+    if (zr.combinedCsv) {
+        csvContent = zr.combinedCsv;
+    } else if (zr.columns && zr.columns.length) {
+        const lines = [zr.columns.join(',')];
+        (zr.rows || []).forEach(row => {
+            lines.push(zr.columns.map(c => {
+                const v = (row[c] !== undefined && row[c] !== null) ? String(row[c]) : '';
+                return (v.includes(',') || v.includes('"') || v.includes('\n'))
+                    ? '"' + v.replace(/"/g, '""') + '"' : v;
+            }).join(','));
+        });
+        csvContent = lines.join('\n');
+    }
+    if (!csvContent) return;
+
+    const filename = ((zr.sheetName || 'zone_data').replace(/[^a-z0-9_\-]/gi, '_')) + '.csv';
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function escHtmlZ(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
+<div class="dashboard-container">
+    <div class="container-fluid py-4">
+        <!-- Header Section -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb mb-1">
+                        <li class="breadcrumb-item"><a href="#" class="text-decoration-none text-muted">Dashboard</a>
+                        </li>
+                        <li class="breadcrumb-item active" aria-current="page">Export Workbooks</li>
+                    </ol>
+                </nav>
+                <h2 class="h3 fw-bold mb-0">Tableau Dashboard <span class="text-primary">Cropper</span></h2>
+                <p class="text-muted small">Configure and export multiple Tableau dashboards into a
+                    single file with AI insights.</p>
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <div class="config-pill d-flex align-items-center bg-white border rounded-pill px-3 py-2 shadow-sm">
+                    <span class="text-muted small fw-medium me-2">Dashboards:</span>
+                    <form action="{{ url_for('set_workbook_count') }}" method="POST" class="m-0">
+                        <select class="form-select form-select-sm border-0 bg-transparent p-0 h-auto" name="count"
+                            onchange="this.form.submit()" style="box-shadow: none; font-weight: 600; width: 40px;">
+                            {% for n in range(1, 7) %}
+                            <option value="{{ n }}" {{ 'selected' if session.workbook_count==n else '' }}>{{ n }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                </div>
+
+                <div class="dropdown">
+                    <button class="btn btn-outline-secondary btn-sm rounded-pill px-3 dropdown-toggle shadow-sm"
+                        type="button" data-bs-toggle="dropdown">
+                        <i data-feather="settings" class="me-1"></i> Quick Actions
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-lg border-0">
+                        <li><a class="dropdown-item" href="{{ url_for('reset') }}"><i data-feather="refresh-cw"
+                                    class="me-2 text-danger"></i>Reset
+                                Workspace</a></li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li><a class="dropdown-item" href="{{ url_for('jobs') }}"><i data-feather="list"
+                                    class="me-2"></i>View All Jobs</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="alerts-container mb-4">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show rounded-4 shadow-sm py-3 px-4 border-0"
+                role="alert">
+                <div class="d-flex align-items-center">
+                    <i data-feather="{{ 'check-circle' if category == 'success' else 'alert-circle' }}"
+                        class="me-3"></i>
+                    <div>{{ message }}</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="row g-4">
+            <!-- Left Column: Workbook Configuration -->
+            <div class="col-lg-8">
+                <div class="row g-4 mb-4">
+                    {% for i in range(session.workbook_count) %}
+                    <div
+                        class="col-md-{{ 12 if session.workbook_count == 1 else 6 }} col-xl-{{ 4 if session.workbook_count >= 3 else 6 }}">
+                        <div class="card border-0 shadow-sm rounded-4 workbook-card h-100 transition-hover" style="overflow:hidden;min-width:0;">
+                            <div
+                                class="card-header bg-transparent border-0 pt-4 px-4 pb-0 d-flex justify-content-between align-items-start">
+                                <div>
+                                    <span class="badge bg-soft-primary text-primary mb-2 rounded-pill px-3">Workbook
+                                        #{{ i + 1 }}</span>
+                                    {% if session.workbooks and i < session.workbooks|length and
+                                        session.workbooks[i].timestamp %} <div class="text-muted xx-small">
+                                        <i data-feather="clock" style="width: 10px; height: 10px;"></i>
+                                        {{ session.workbooks[i].timestamp }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            <div class="crop-status" id="crop-status-{{ i }}">
+                                {% if session.workbooks and i < session.workbooks|length and
+                                    session.workbooks[i].cropped %} <span
+                                    class="badge bg-success bg-opacity-10 text-success rounded-circle p-2"
+                                    data-bs-toggle="tooltip" title="Cropped">
+                                    <i data-feather="check"></i>
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-light bg-opacity-50 text-muted rounded-circle p-2"
+                                        data-bs-toggle="tooltip" title="Not Cropped">
+                                        <i data-feather="minus"></i>
+                                    </span>
+                                    {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="card-body p-4" style="overflow:hidden;min-width:0;max-width:100%;box-sizing:border-box;">
+                            <div class="mb-3">
+                                <label
+                                    class="form-label small fw-bold text-uppercase tracking-wider text-muted">Project</label>
+                                <div class="input-group-custom">
+                                    <select class="form-select select-modern project-select"
+                                        data-workbook-index="{{ i }}">
+                                        <option value="">Choose Project...</option>
+                                        {% for project in projects %}
+                                        <option value="{{ project.id }}" {{ 'selected' if session.workbooks and i <
+                                            session.workbooks|length and session.workbooks[i].project==project.id
+                                            else '' }}>
+                                            {{ project.name }}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label
+                                    class="form-label small fw-bold text-uppercase tracking-wider text-muted">Workbook</label>
+                                <select class="form-select select-modern workbook-select" data-workbook-index="{{ i }}"
+                                    {{ 'disabled' if not (session.workbooks and i < session.workbooks|length and
+                                    session.workbooks[i].project) else '' }}>
+                                    <option value="">Select Workbook...</option>
+                                    {% if session.workbooks and i < session.workbooks|length and
+                                        session.workbooks[i].project %} {% for workbook in
+                                        workbooks_by_project.get(session.workbooks[i].project, []) %} <option
+                                        value="{{ workbook.id }}" {{ 'selected' if
+                                        session.workbooks[i].workbook==workbook.id else '' }}>
+                                        {{ workbook.name }}
+                                        </option>
+                                        {% endfor %}
+                                        {% endif %}
+                                </select>
+                                
+                                <div class="mt-2 text-end">
+                                    <button type="button" class="btn btn-sm btn-outline-info view-schema-btn" 
+                                            data-workbook-index="{{ i }}" 
+                                            style="display: {{ 'inline-block' if session.workbooks and i < session.workbooks|length and session.workbooks[i].workbook else 'none' }}; font-size: 11px; padding: 4px 8px; border-radius: 4px; transition: all 0.2s;">
+                                        <i data-feather="database" style="width: 12px; height: 12px;" class="me-1"></i>
+                                        View Data Source Queries
+                                    </button>
+                                </div>
+
+                                <!-- Data Source Info Section -->
+                                <div class="datasource-info mt-2" data-workbook-index="{{ i }}" style="display: none;">
+                                    <div
+                                        class="alert alert-info alert-sm py-2 px-3 mb-0 rounded-3 border-0 bg-info bg-opacity-10">
+                                        <div class="d-flex align-items-center">
+                                            <i data-feather="database" style="width: 14px; height: 14px;"
+                                                class="text-info me-2 flex-shrink-0"></i>
+                                            <div class="datasource-content small text-info">
+                                                <span class="fw-medium">Loading data source info...</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <label
+                                    class="form-label small fw-bold text-uppercase tracking-wider text-muted">Dashboard</label>
+                                <select class="form-select select-modern dashboard-select" data-workbook-index="{{ i }}"
+                                    {{ 'disabled' if not (session.workbooks and i < session.workbooks|length and
+                                    session.workbooks[i].workbook) else '' }}>
+                                    <option value="">Select Dashboard...</option>
+                                    {% if session.workbooks and i < session.workbooks|length and
+                                        session.workbooks[i].workbook %} {% for view in
+                                        views_by_workbook.get(session.workbooks[i].workbook, []) %} <option
+                                        value="{{ view.id }}" {{ 'selected' if session.workbooks[i].dashboard==view.id
+                                        else '' }}>
+                                        {{ view.name }}
+                                        </option>
+                                        {% endfor %}
+                                        {% endif %}
+                                </select>
+                            </div>
+
+                            <!-- Filter Section -->
+                            <div class="mb-3 filter-container-wrapper" data-workbook-index="{{ i }}"
+                                style="display: none;">
+                                <label
+                                    class="form-label small fw-bold text-uppercase tracking-wider text-muted">Dashboard
+                                    Filters</label>
+                                <div class="filter-container p-3 bg-light rounded-3 border border-secondary border-opacity-10"
+                                    id="filter-container-{{ i }}">
+                                    <!-- Dynamic filters will be injected here -->
+                                    <div class="text-muted small">Loading filters...</div>
+                                </div>
+                                <div class="mt-2 text-end">
+                                    <button type="button"
+                                        class="btn btn-link btn-sm text-decoration-none p-0 add-manual-filter"
+                                        data-workbook-index="{{ i }}">
+                                        <i data-feather="plus" style="width: 12px; height: 12px;"></i> Add Custom Filter
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="d-grid mt-4">
+                                <button class="btn btn-primary btn-modern export-btn" data-workbook-index="{{ i }}"
+                                    {{ 'disabled' if not (session.workbooks and i < session.workbooks|length and
+                                    session.workbooks[i].dashboard) else '' }}>
+                                    <i data-feather="download-cloud" class="me-2"></i>
+                                    <span>Prepare Image</span>
+                                </button>
+                            </div>
+
+                            <!-- Crop Action Area -->
+                            <div class="crop-section mt-3" data-workbook-index="{{ i }}"
+                                style="display: {{ 'block' if session.workbooks and i < session.workbooks|length and session.workbooks[i].dashboard and not session.workbooks[i].cropped else 'none' }};">
+                                <a href="#" class="btn btn-warning btn-modern w-100 crop-btn"
+                                    data-workbook-index="{{ i }}">
+                                    <i data-feather="crop" class="me-2"></i>
+                                    Configure Crop
+                                </a>
+                            </div>
+
+                            <!-- Preview Area -->
+                            <div class="preview-section mt-4" data-workbook-index="{{ i }}"
+                                style="display: {{ 'block' if session.workbooks and i < session.workbooks|length and (session.workbooks[i].cropped_path or session.workbooks[i].png_path) else 'none' }};">
+                                <div class="preview-placeholder rounded-3 overflow-hidden border">
+                                    {% if session.workbooks and i < session.workbooks|length %} {% if
+                                        session.workbooks[i].cropped_path %} <img
+                                        src="/{{ session.workbooks[i].cropped_path }}" class="img-fluid hover-zoom"
+                                        alt="Crop Preview">
+                                        {% elif session.workbooks[i].png_path %}
+                                        <img src="/{{ session.workbooks[i].png_path }}" class="img-fluid hover-zoom"
+                                            alt="Export Preview">
+                                        {% endif %}
+                                        {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Right Column: Results & Global Actions -->
+        <div class="col-lg-4">
+            <div class="sticky-top" style="top: 2rem; z-index: 10;">
+                <!-- Actions Sidebar -->
+                <div class="card border-0 shadow-sm rounded-4 bg-white overflow-hidden mb-4">
+                    <div class="card-body p-4">
+                        <h5 class="fw-bold mb-4 d-flex align-items-center text-dark">
+                            <i data-feather="zap" class="text-warning me-2"></i>
+                            Finalize Export
+                        </h5>
+
+                        <form id="combine-form" action="{{ url_for('combine_images') }}" method="POST">
+                            <div class="mb-4">
+                                <label class="form-label small text-muted fw-bold opacity-75">EXPORT
+                                    FILENAME</label>
+                                <div class="input-group bg-light rounded-3 border-0">
+                                    <span class="input-group-text bg-transparent border-0 text-muted opacity-50"><i
+                                            data-feather="file-text" style="width:16px;"></i></span>
+                                    <input type="text" name="filename"
+                                        class="form-control bg-transparent border-0 text-dark placeholder-muted"
+                                        placeholder="e.g. Morning_Report" required style="box-shadow: none;">
+                                </div>
+                            </div>
+
+                            <div class="d-grid gap-3" id="combine-section"
+                                style="display: {{ 'block' if session.workbooks and session.workbooks|selectattr('cropped', 'equalto', true)|list|length == session.workbook_count else 'none' }};">
+                                <button type="submit" class="btn btn-primary btn-lg btn-modern-shiny w-100"
+                                    id="combineButton">
+                                    <i data-feather="package" class="me-2"></i>
+                                    <span>Combine & Export</span>
+                                </button>
+                            </div>
+
+                            <div class="mt-4 pt-4 border-top border-secondary border-opacity-25">
+                                <div class="d-flex gap-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-modern flex-grow-1"
+                                        id="savePresetButton" data-bs-toggle="modal" data-bs-target="#presetModal"
+                                        {{ 'disabled' if not (session.workbooks and
+                                        session.workbooks|selectattr('cropped', 'equalto' , true)|list|length> 0) else
+                                        '' }}>
+                                        <i data-feather="save" class="me-2"></i> Save Preset
+                                    </button>
+                                    <button type="button" class="btn btn-outline-danger btn-modern"
+                                        data-bs-toggle="modal" data-bs-target="#resetModal">
+                                        <i data-feather="trash-2"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="bg-primary bg-opacity-25 p-4 d-flex align-items-center">
+                        <div class="status-circle me-3"></div>
+                        <div class="small">
+                            <span class="fw-bold d-block" id="task-status">Ready</span>
+                            <span id="cropped-count-text" class="opacity-75">{{
+                                session.workbooks|selectattr('cropped', 'equalto', true)|list|length
+                                if session.workbooks else 0 }} of {{ session.workbook_count }} processed</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+</div>
+
+<!-- Modals -->
+<div class="modal fade" id="cropModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <div class="modal-header border-0 bg-dark text-white px-4 py-3">
+                <h5 class="modal-title d-flex align-items-center">
+                    <i data-feather="crop" class="me-2 text-warning"></i>
+                    Define Dashboard Area
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                    aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 bg-secondary bg-opacity-10"
+                style="min-height: 400px; max-height: 80vh; overflow: auto;">
+                <div id="crop-canvas-container" class="shadow-sm bg-white m-3 rounded text-center">
+                    <canvas id="cropCanvas" style="max-width: 100%; height: auto; display: inline-block;"></canvas>
+                </div>
+            </div>
+            <div class="modal-footer border-0 px-4 py-3 bg-white">
+                <div class="me-auto text-muted small">
+                    <i data-feather="info" class="me-1"></i> Drag to select area. Click and drag
+                    selected area to move.
+                </div>
+                <button type="button" class="btn btn-outline-secondary rounded-pill px-4"
+                    data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary rounded-pill px-4" id="saveCropBtn">Apply
+                    Selection</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="schemaModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+            <div class="modal-header border-bottom px-4 py-3 bg-light">
+                <h5 class="modal-title fw-bold text-dark d-flex align-items-center">
+                    <i data-feather="database" class="text-primary me-2"></i> Data Source Structure & Queries
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4 text-start position-relative">
+                <div id="schema-loading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="text-muted mt-3 small">Querying Tableau Metadata API for upstream tables and Custom SQL...</p>
+                </div>
+                <div id="schema-content" class="d-none">
+                    <pre class="bg-dark text-light p-3 rounded-3" style="font-size: 13px; max-height: 50vh; overflow-y: auto; white-space: pre-wrap;" id="schema-text"></pre>
+                </div>
+                <div id="schema-error" class="d-none my-3 alert alert-danger border-0">
+                    <i data-feather="alert-triangle" class="me-2"></i> <span id="schema-error-msg"></span>
+                </div>
+            </div>
+            <div class="modal-footer border-top bg-white px-4">
+                <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="presetModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+            <div class="modal-header border-0 px-4 pt-4 pb-0">
+                <h5 class="modal-title fw-bold">Save as Preset</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="save-preset-form">
+                <div class="modal-body p-4">
+                    <p class="text-muted small mb-4">Save these dashboard selections and crop areas as a
+                        preset to quickly reuse them later.</p>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">PRESET NAME</label>
+                        <input type="text" name="name" class="form-control select-modern"
+                            placeholder="e.g. Weekly Sales Overview" required>
+                    </div>
+                    <div class="mb-0">
+                        <label class="form-label small fw-bold">DESCRIPTION (OPTIONAL)</label>
+                        <textarea name="description" class="form-control select-modern" rows="2"
+                            placeholder="Briefly describe what this preset is for..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 px-4 pb-4">
+                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4"
+                        data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary rounded-pill px-4">Create
+                        Preset</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="resetModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4">
+            <div class="modal-body p-4 text-center">
+                <div class="text-danger mb-3">
+                    <i data-feather="alert-triangle" style="width: 48px; height: 48px;"></i>
+                </div>
+                <h5 class="fw-bold">Clear Workspace?</h5>
+                <p class="text-muted small">This will reset all current selections and cropped images.
+                    This action cannot be undone.</p>
+                <div class="d-grid gap-2 mt-4">
+                    <a href="{{ url_for('reset') }}" class="btn btn-danger rounded-pill">Yes, Reset
+                        Everything</a>
+                    <button type="button" class="btn btn-light rounded-pill" data-bs-toggle="modal"
+                        data-bs-dismiss="modal">Keep Working</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        console.log('DOMContentLoaded fired!');
+        feather.replace();
+        checkCombineAndPresetReady();
+
+        // Helper to revert button state when filters change
+        function revertExportButton(index) {
+            const btn = document.querySelector(`.export-btn[data-workbook-index="${index}"]`);
+            if (btn && btn.innerHTML.includes('Ready to Crop')) {
+                btn.innerHTML = '<i data-feather="download-cloud" class="me-2"></i> Prepare Image';
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-primary');
+                feather.replace();
+                // Hide crop section until re-prepared
+                const cropSection = document.querySelector(`.crop-section[data-workbook-index="${index}"]`);
+                if (cropSection) cropSection.style.display = 'none';
+            }
+        }
+
+        // Global listener for filter changes (event delegation)
+        document.addEventListener('input', function (e) {
+            if (e.target.classList.contains('filter-input')) {
+                const workbookCol = e.target.closest('[data-workbook-index]');
+                const index = workbookCol ? workbookCol.dataset.workbookIndex : null;
+                if (index !== null) revertExportButton(index);
+            }
+        });
+
+        // Project selection change
+        document.querySelectorAll('.project-select').forEach(select => {
+            select.addEventListener('change', function () {
+                const index = this.dataset.workbookIndex;
+                const projectId = this.value;
+                const wbSelect = document.querySelector(`.workbook-select[data-workbook-index="${index}"]`);
+                const dsSelect = document.querySelector(`.dashboard-select[data-workbook-index="${index}"]`);
+                const exportBtn = document.querySelector(`.export-btn[data-workbook-index="${index}"]`);
+
+                if (!projectId) {
+                    wbSelect.innerHTML = '<option value="">Select Workbook...</option>';
+                    wbSelect.disabled = true;
+                    dsSelect.innerHTML = '<option value="">Select Dashboard...</option>';
+                    dsSelect.disabled = true;
+                    exportBtn.disabled = true;
+                    return;
+                }
+
+                wbSelect.innerHTML = '<option value="">Loading...</option>';
+                wbSelect.disabled = true;
+
+                fetch(`/api/workbooks/${projectId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        wbSelect.innerHTML = '<option value="">Select Workbook...</option>';
+                        data.workbooks.forEach(wb => {
+                            const option = document.createElement('option');
+                            option.value = wb.id;
+                            option.textContent = wb.name;
+                            wbSelect.appendChild(option);
+                        });
+                        wbSelect.disabled = false;
+                    })
+                    .catch(error => alert('Error loading workbooks: ' + error.message));
+            });
+        });
+
+        // --- Schema Viewer Logic ---
+        const schemaModalEl = document.getElementById('schemaModal');
+        let schemaModal;
+        if (schemaModalEl) {
+            schemaModal = new bootstrap.Modal(schemaModalEl);
+        }
+
+        document.querySelectorAll('.view-schema-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const workbookIndex = this.dataset.workbookIndex;
+                const workbookSelect = document.querySelector(`.workbook-select[data-workbook-index="${workbookIndex}"]`);
+                const workbookId = workbookSelect.value;
+                
+                if (!workbookId) return;
+                
+                if (schemaModal) schemaModal.show();
+                
+                document.getElementById('schema-loading').classList.remove('d-none');
+                document.getElementById('schema-content').classList.add('d-none');
+                document.getElementById('schema-error').classList.add('d-none');
+                
+                fetch(`/api/datasources/${workbookId}/schema`)
+                    .then(response => {
+                        if (!response.ok) throw new Error('Failed to fetch schema metadata');
+                        return response.json();
+                    })
+                    .then(data => {
+                        document.getElementById('schema-loading').classList.add('d-none');
+                        if (data.schema_info) {
+                            document.getElementById('schema-content').classList.remove('d-none');
+                            document.getElementById('schema-text').textContent = data.schema_info;
+                        } else if (data.error) {
+                            throw new Error(data.error);
+                        } else {
+                            throw new Error('No schema information available.');
+                        }
+                    })
+                    .catch(err => {
+                        document.getElementById('schema-loading').classList.add('d-none');
+                        document.getElementById('schema-error').classList.remove('d-none');
+                        document.getElementById('schema-error-msg').textContent = err.message;
+                    });
+            });
+        });
+        // ---------------------------
+
+        // Helper function to format date nicely
+        function formatAsOfDate(isoDateStr) {
+            if (!isoDateStr) return null;
+            try {
+                const date = new Date(isoDateStr);
+                return date.toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch {
+                return isoDateStr;
+            }
+        }
+
+        // Workbook selection change
+        document.querySelectorAll('.workbook-select').forEach(select => {
+            select.addEventListener('change', function () {
+                const index = this.dataset.workbookIndex;
+                const workbookId = this.value;
+                const dsSelect = document.querySelector(`.dashboard-select[data-workbook-index="${index}"]`);
+                const exportBtn = document.querySelector(`.export-btn[data-workbook-index="${index}"]`);
+                const dsInfoBox = document.querySelector(`.datasource-info[data-workbook-index="${index}"]`);
+                const schemaBtn = document.querySelector(`.view-schema-btn[data-workbook-index="${index}"]`);
+
+                if (!workbookId) {
+                    dsSelect.innerHTML = '<option value="">Select Dashboard...</option>';
+                    dsSelect.disabled = true;
+                    exportBtn.disabled = true;
+                    if (dsInfoBox) dsInfoBox.style.display = 'none';
+                    if (schemaBtn) schemaBtn.style.display = 'none';
+                    return;
+                }
+
+                if (schemaBtn) schemaBtn.style.display = 'inline-block';
+
+                // Pre-download TWB file + datasource info in background immediately
+                // so export_dashboard doesn't need to wait for them during Prepare Image
+                fetch('/api/prefetch-workbook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workbook_id: workbookId })
+                })
+                .then(r => r.json())
+                .then(d => console.log(`[${index}] TWB prefetch: ${d.status || d.error}`))
+                .catch(err => console.warn(`[${index}] TWB prefetch error:`, err));
+
+                dsSelect.innerHTML = '<option value="">Loading...</option>';
+                dsSelect.disabled = true;
+
+                // Fetch dashboards
+                fetch(`/api/views/${workbookId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        dsSelect.innerHTML = '<option value="">Select Dashboard...</option>';
+                        data.views.forEach(view => {
+                            const option = document.createElement('option');
+                            option.value = view.id;
+                            option.dataset.contentUrl = view.contentUrl;
+                            option.dataset.type = view.type;
+                            if (view.parent_dashboard_content_url) {
+                                option.dataset.parentDashboardContentUrl = view.parent_dashboard_content_url;
+                            }
+                            option.textContent = view.name;
+                            dsSelect.appendChild(option);
+                        });
+                        dsSelect.disabled = false;
+                    })
+                    .catch(error => alert('Error loading dashboards: ' + error.message));
+
+                // Fetch data source info for As-of-Date
+                if (dsInfoBox) {
+                    dsInfoBox.style.display = 'block';
+                    const dsContent = dsInfoBox.querySelector('.datasource-content');
+                    dsContent.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading data source info...';
+
+                    fetch(`/api/datasources/${workbookId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.datasources && data.datasources.length > 0) {
+                                let infoHtml = '';
+                                data.datasources.forEach((ds, idx) => {
+                                    const dsName = ds.name || 'Data Source';
+                                    const hasExtract = ds.hasExtracts;
+                                    const updatedDate = formatAsOfDate(ds.updatedAt);
+                                    const dsType = ds.type || '';
+
+                                    let statusText = '';
+                                    if (hasExtract && updatedDate) {
+                                        statusText = `<strong>Extract</strong> — As of ${updatedDate}`;
+                                    } else if (updatedDate) {
+                                        statusText = `Updated: ${updatedDate}`;
+                                    } else if (hasExtract) {
+                                        statusText = `<strong>Extract</strong> (refresh date unavailable)`;
+                                    } else {
+                                        statusText = `Live connection`;
+                                    }
+
+                                    if (idx > 0) infoHtml += '<br>';
+                                    infoHtml += `<span title="${dsName} (${dsType})">${statusText}</span>`;
+                                });
+                                dsContent.innerHTML = infoHtml;
+                            } else {
+                                dsContent.innerHTML = '<span class="text-muted">No data source info available</span>';
+                            }
+                            feather.replace();
+                        })
+                        .catch(err => {
+                            console.error('Error fetching datasource info:', err);
+                            dsContent.innerHTML = '<span class="text-muted">Could not fetch data source info</span>';
+                        });
+                }
+            });
+        });
+
+        // Dashboard selection change
+        document.querySelectorAll('.dashboard-select').forEach(select => {
+            select.addEventListener('change', function () {
+                const index = this.dataset.workbookIndex;
+                const viewId = this.value;
+                const exportBtn = document.querySelector(`.export-btn[data-workbook-index="${index}"]`);
+                const filterWrapper = document.querySelector(`.filter-container-wrapper[data-workbook-index="${index}"]`);
+                const filterContainer = document.getElementById(`filter-container-${index}`);
+
+                exportBtn.disabled = !viewId;
+
+                if (viewId) {
+                    const workbookId = document.querySelector(`.workbook-select[data-workbook-index="${index}"]`).value;
+                    filterWrapper.style.display = 'block';
+                    filterContainer.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Loading filters...</div>';
+
+                    fetch(`/api/filters/${viewId}?workbook_id=${workbookId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.filters && data.filters.length > 0) {
+                                filterContainer.innerHTML = '';
+                                data.filters.forEach(f => {
+                                    const fieldName = f.name;
+                                    const typeLabel = f.type === 'parameter' ? 'Parameter' : 'Filter';
+                                    const div = document.createElement('div');
+                                    div.className = 'mb-2 last-child-mb-0';
+                                    div.innerHTML = `
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <label class="small text-muted mb-0">${fieldName}</label>
+                                            <span class="badge bg-light text-muted xx-small border">${typeLabel}</span>
+                                        </div>
+                                        <input type="text" class="form-control form-control-sm filter-input" 
+                                               data-filter-name="${fieldName}" placeholder="Value (leave empty for All)">
+                                    `;
+                                    filterContainer.appendChild(div);
+                                });
+                            } else {
+                                filterContainer.innerHTML = `
+                                    <div class="text-center py-2">
+                                        <div class="text-muted small italic mb-1">No automatic filters detected.</div>
+                                        <div class="xx-small text-muted opacity-75">Some dashboards require manual filter entry. Use the button below to add custom filters.</div>
+                                    </div>
+                                `;
+                            }
+                            feather.replace();
+                        })
+                        .catch(err => {
+                            console.error('Error fetching filters:', err);
+                            filterContainer.innerHTML = '<div class="text-danger small">Error loading filters.</div>';
+                        });
+
+                    // Fetch view details to show sheet count
+                    fetch(`/api/views/${workbookId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            // Show sheet/view count indicator
+                            let sheetCountDiv = document.querySelector(`.sheet-count-indicator[data-workbook-index="${index}"]`);
+                            if (!sheetCountDiv) {
+                                sheetCountDiv = document.createElement('div');
+                                sheetCountDiv.className = 'sheet-count-indicator alert alert-info alert-sm py-2 px-3 mb-2 mt-2 border-0';
+                                sheetCountDiv.dataset.workbookIndex = index;
+                                filterWrapper.insertBefore(sheetCountDiv, filterContainer);
+                            }
+                            
+                            const totalViews = data.total_count || 0;
+                            const worksheets = data.worksheet_count || 0;
+                            const dashboards = data.dashboard_count || 0;
+                            
+                            if (totalViews === 1 && dashboards === 1) {
+                                sheetCountDiv.className = 'sheet-count-indicator alert alert-info alert-sm py-2 px-3 mb-2 mt-2 border-0 bg-info bg-opacity-10';
+                                sheetCountDiv.innerHTML = `
+                                    <div class="d-flex align-items-center">
+                                        <i data-feather="layout" style="width: 14px; height: 14px;" class="text-info me-2"></i>
+                                        <div class="small text-info">
+                                            <span class="fw-medium">1 Dashboard View</span>
+                                            <span class="opacity-75 ms-1">(Combined crosstab will include all sheets)</span>
+                                        </div>
+                                    </div>`;
+                            } else if (worksheets > 0) {
+                                sheetCountDiv.className = 'sheet-count-indicator alert alert-success alert-sm py-2 px-3 mb-2 mt-2 border-0 bg-success bg-opacity-10';
+                                sheetCountDiv.innerHTML = `
+                                    <div class="d-flex align-items-center">
+                                        <i data-feather="check-circle" style="width: 14px; height: 14px;" class="text-success me-2"></i>
+                                        <div class="small text-success">
+                                            <span class="fw-medium">${worksheets} Worksheet(s) Found</span>
+                                            <span class="opacity-75 ms-1">${dashboards > 0 ? `+ ${dashboards} Dashboard(s)` : ''}</span>
+                                        </div>
+                                    </div>`;
+                            } else {
+                                sheetCountDiv.className = 'sheet-count-indicator alert alert-secondary alert-sm py-2 px-3 mb-2 mt-2 border-0';
+                                sheetCountDiv.innerHTML = `
+                                    <div class="d-flex align-items-center">
+                                        <i data-feather="grid" style="width: 14px; height: 14px;" class="text-secondary me-2"></i>
+                                        <div class="small text-secondary">
+                                            <span class="fw-medium">${totalViews} View(s) in Workbook</span>
+                                        </div>
+                                    </div>`;
+                            }
+                            feather.replace();
+                        })
+                        .catch(err => {
+                            console.error('Error fetching view count:', err);
+                        });
+
+                    // Save selection to session
+                    const projectId = document.querySelector(`.project-select[data-workbook-index="${index}"]`).value;
+                    fetch('/api/set_selection', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            index: parseInt(index),
+                            project: projectId,
+                            workbook: workbookId,
+                            dashboard: viewId
+                        })
+                    }).catch(error => console.error('Error saving selection:', error));
+
+                    const selectedDsOption = dsSelect.options[dsSelect.selectedIndex];
+                    const preWarmContentUrl = selectedDsOption ? (selectedDsOption.dataset.contentUrl || '') : '';
+
+                    // ── Pre-fetch dashboard PDF image in background (biggest time saver) ──
+                    // Tableau PDF render takes 10-30 s; starting it now means Prepare Image
+                    // just retrieves the already-rendered image instead of waiting.
+                    if (viewId && viewId !== 'null') {
+                        fetch('/api/prefetch-dashboard-image', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                view_id: viewId,
+                                workbook_index: parseInt(index)
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(d => console.log(`[${index}] Dashboard image prefetch: ${d.status || d.error}`))
+                        .catch(err => console.warn(`[${index}] Image prefetch failed:`, err));
+                    }
+
+                    // ── Pre-warm Selenium session in background so Show Data is faster ──
+                    if (preWarmContentUrl) {
+                        fetch('/api/prewarm-selenium', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                workbook_index: parseInt(index),
+                                content_url: preWarmContentUrl
+                            })
+                        })
+                        .then(r => r.json())
+                        .then(d => console.log(`[${index}] Selenium pre-warm: ${d.status || d.error}`))
+                        .catch(err => console.warn(`[${index}] Pre-warm request failed:`, err));
+                    }
+
+                } else {
+                    filterWrapper.style.display = 'none';
+                }
+            });
+        });
+
+        // Toggle: use Tableau Embedding API (frontend summary data)
+        // or rely entirely on backend REST CSV extraction.
+        // Set to true to use the local static/js/tableau.embedding.3.latest.min.js
+        const USE_EMBEDDING_API_FOR_CSV = true;
+
+        // Export/Prepare Image button
+        document.querySelectorAll('.export-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const index = this.dataset.workbookIndex;
+                const projSelect = document.querySelector(`.project-select[data-workbook-index="${index}"]`);
+                const wbSelect = document.querySelector(`.workbook-select[data-workbook-index="${index}"]`);
+                const dsSelect = document.querySelector(`.dashboard-select[data-workbook-index="${index}"]`);
+
+                const workbookId = wbSelect.value;
+                const viewId = dsSelect.value;
+                if (!workbookId || !viewId || viewId === "null") {
+                    console.warn(`[${index}] Invalid selection: workbookId=${workbookId}, viewId=${viewId}`);
+                    return;
+                }
+
+                const project_name = projSelect.options[projSelect.selectedIndex]?.text || 'Unknown';
+                const workbook_name = wbSelect.options[wbSelect.selectedIndex]?.text || 'Unknown';
+                const dashboard_name = dsSelect.options[dsSelect.selectedIndex]?.text || 'Unknown';
+                const view_type = dsSelect.options[dsSelect.selectedIndex]?.dataset.type || '';
+
+                const selectedOption = dsSelect.options[dsSelect.selectedIndex];
+                let contentUrl = selectedOption.dataset.contentUrl;
+                
+                // CRITICAL: If this is a worksheet and we have a parent dashboard URL, use THAT instead.
+                // This ensures the Embedding API loads the full dashboard and can find ALL sheets (156 rows).
+                if (view_type.toLowerCase() === 'worksheet' && selectedOption.dataset.parentDashboardContentUrl) {
+                    console.log(`[${index}] Worksheet selected, but switching to parent dashboard for full capture: ${selectedOption.dataset.parentDashboardContentUrl}`);
+                    contentUrl = selectedOption.dataset.parentDashboardContentUrl;
+                }
+                
+                // Collect filters
+                const filters = {};
+                document.querySelectorAll(`#filter-container-${index} .filter-input`).forEach(input => {
+                    const name = input.dataset.filterName;
+                    const val = input.value.trim();
+                    if (val) filters[name] = val;
+                });
+
+                const originalContent = this.innerHTML;
+                this.disabled = true;
+                this.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> Processing...';
+                document.getElementById('task-status').textContent = `Exporting Workbook ${parseInt(index) + 1}...`;
+
+                const executeBackendExport = (csvDataString = "") => {
+                    fetch('/export_dashboard', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            workbook_id: workbookId,
+                            view_id: viewId,
+                            view_type: view_type,
+                            content_url: contentUrl,
+                            index: index,
+                            project_name: project_name,
+                            workbook_name: workbook_name,
+                            dashboard_name: dashboard_name,
+                            filters: filters,
+                            csv_data: csvDataString,
+                            extraction_stats: window.extractionStats || {}
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            this.innerHTML = '<i data-feather="check" class="me-2"></i> Ready to Crop';
+                            this.dataset.pngFilename = data.png_filename;
+                            this.classList.remove('btn-primary');
+                            this.classList.add('btn-success');
+                            feather.replace();
+
+                            document.querySelector(`.crop-section[data-workbook-index="${index}"]`).style.display = 'block';
+
+                            const previewSection = document.querySelector(`.preview-section[data-workbook-index="${index}"]`);
+                            previewSection.style.display = 'block';
+                            previewSection.querySelector('.preview-placeholder').innerHTML = `<img src="/uploads/${data.png_filename}" class="img-fluid hover-zoom" alt="Export Preview" style="width:100%;max-width:1000px;">`;
+
+                            // CSV data is no longer fetched during export — skip updateCSVUI here.
+                            // Zone data is fetched on-demand after the user crops.
+
+                            document.getElementById('task-status').textContent = 'Dashboard Exported';
+                            
+                            // Update global count status
+                            const countStatus = document.getElementById('export-count-status');
+                            if (countStatus) {
+                                const currentContent = countStatus.textContent.trim();
+                                const parts = currentContent.split(' of ');
+                                if (parts.length === 2) {
+                                    let currentCount = parseInt(parts[0]) || 0;
+                                    const totalCount = parts[1].split(' ')[0];
+                                    countStatus.textContent = `${currentCount + 1} of ${totalCount} processed`;
+                                }
+                            }
+
+                            checkCombineAndPresetReady();
+                        } else {
+                            throw new Error(data.error || 'Export failed');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('Error: ' + error.message);
+                        this.innerHTML = originalContent;
+                    })
+                    .finally(() => this.disabled = false);
+                }; // End executeBackendExport
+
+                // updateCSVUI — called after crop save (and optionally after export).
+                // Stores zone meta and injects the "Show Data" button under the preview image.
+                window.updateCSVUI = function(index, data) {
+                    // Clear any old CSV indicator (no longer shown)
+                    const oldInd = document.querySelector(`.csv-data-indicator[data-workbook-index="${index}"]`);
+                    if (oldInd) oldInd.innerHTML = '';
+
+                    // Store zone metadata when a sheet was matched
+                    if (data.matched_sheet) {
+                        if (!window._zoneMetaMap) window._zoneMetaMap = {};
+                        window._zoneMetaMap[index] = {
+                            matchedSheet:     data.matched_sheet,
+                            matchedSheets:    data.matched_sheets || [],
+                            dashboardViewId:  data.dashboard_view_id || '',
+                            contentUrl:       data.content_url || '',
+                            dashboard:        data.dashboard || '',
+                            workbookIndex:    index,
+                            // Store image filenames so inline AI insights can use them
+                            croppedFilename:  data.cropped_filename || '',
+                            pngFilename:      data.png_filename || '',
+                        };
+
+                        // Re-trigger pre-warm with the confirmed content_url from the server
+                        // (This is more accurate than the dropdown's content_url at selection time)
+                        if (data.content_url) {
+                            fetch('/api/prewarm-selenium', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    workbook_index: parseInt(index),
+                                    content_url: data.content_url
+                                })
+                            })
+                            .then(r => r.json())
+                            .then(d => console.log(`[${index}] Selenium pre-warm (post-crop): ${d.status || d.error}`))
+                            .catch(err => console.warn(`[${index}] Pre-warm (post-crop) failed:`, err));
+                        }
+                    }
+
+                    // ── Inject "Show Data" button + result area into the preview section ──
+                    const previewSection = document.querySelector(`.preview-section[data-workbook-index="${index}"]`);
+                    if (!previewSection) return;
+
+                    // Remove any previous zone area (re-crop clears old results)
+                    let zoneArea = previewSection.querySelector('.zone-inline-area');
+                    if (zoneArea) zoneArea.remove();
+
+                    if (data.matched_sheet) {
+                        zoneArea = document.createElement('div');
+                        zoneArea.className = 'zone-inline-area mt-2';
+                        zoneArea.style.cssText = 'width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;';
+                        previewSection.appendChild(zoneArea);
+
+                        // Single "Show Data" button — fetches ALL matched sheets and
+                        // merges them into one combined view.
+                        const allSheets = (data.matched_sheets && data.matched_sheets.length > 0)
+                            ? data.matched_sheets
+                            : [data.matched_sheet];
+                        const sheetLabel = allSheets.join(' + ');
+
+                        zoneArea.innerHTML = `
+                            <div id="zone-btn-wrap-${index}">
+                                <button class="btn btn-sm btn-info w-100 rounded-3 mt-1"
+                                        onclick="fetchZoneData(${index})"
+                                        style="font-size:13px;font-weight:600;padding:8px 0;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;vertical-align:middle;"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+                                    Show Data
+                                    <span style="font-size:11px;opacity:.8;margin-left:6px;">— ${escHtmlZ(sheetLabel)}</span>
+                                </button>
+                            </div>
+                            <div id="zone-result-${index}" style="display:none;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;" class="mt-2"></div>`;
+                        feather.replace();
+                    }
+                };
+
+                // If we're not using the Embedding API for CSV extraction,
+                // immediately delegate all crosstab/summary-data work to the backend.
+                if (!USE_EMBEDDING_API_FOR_CSV) {
+                    console.log(`[${index}] Skipping Embedding API; using backend REST export for all sheets.`);
+                    executeBackendExport("");
+                    return;
+                }
+
+                // --- Javascript Embedding API Data Extraction ---
+                // We create a temporary hidden Tableau viz. If the user is authenticated in the browser session,
+                // it will load instantly, extract all hidden sheets via getSummaryDataAsync, and send to backend.
+                const container = document.createElement('div');
+                // Use a small but real size and better positioning to ensure the browser doesn't throttle it
+                container.style.cssText = 'position: fixed; top: 0; left: 0; width: 800px; height: 600px; overflow: hidden; z-index: -1; opacity: 0.01; pointer-events: none;';
+                
+                const serverUrl = "{{ tableau_server }}".replace(/\/$/, ""); // Remove trailing slash
+                const siteId = "{{ tableau_site }}";
+                const sitePath = siteId ? `/t/${siteId.replace(/^\//, "")}` : ""; // Ensure leading slash, no trailing
+                
+                // Content URL usually looks like "/views/Workbook/Dashboard"
+                const normalizedContentUrl = contentUrl.replace(/^\//, "");
+                
+                const vizSrc = `${serverUrl}${sitePath}/${normalizedContentUrl}`;
+                console.log(`[${index}] Initializing Hidden Viz with Source: ${vizSrc}`);
+                
+                const viz = document.createElement('tableau-viz');
+                viz.id = `tableauViz-${index}`;
+                viz.src = vizSrc;
+                // Important: DO NOT hide perfectly; tableau embedding sometimes fails to render if display:none
+
+                let exportFired = false;
+                let embedTimeout = setTimeout(() => {
+                    if (exportFired) return;
+                    console.warn(`[${index}] TIMEOUT: Tableau Viz took >60s to load. Falling back to backend.`);
+                    this.innerHTML = '<i class="fas fa-exclamation-triangle"></i> API Timeout - Using Backend...';
+                    cleanupViz();
+                    exportFired = true;
+                    executeBackendExport("");
+                }, 60000); // 60 seconds timeout
+
+                const cleanupViz = () => {
+                    clearTimeout(embedTimeout);
+                    if (container && container.parentNode) {
+                        try { container.parentNode.removeChild(container); } catch(e){}
+                    }
+                };
+
+                viz.addEventListener('firstinteractive', async () => {
+                    if (exportFired) return;
+                    console.log(`[${index}] Viz FIRST_INTERACTIVE - waiting 1s for consistency...`);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    this.innerHTML = '<i class="fas fa-search"></i> Discovering Worksheets...';
+                    let combinedCsv = "";
+                    try {
+                        const activeSheet = viz.workbook.activeSheet;
+                        
+                        // Helper function to recursively find all worksheets
+                        const getAllWorksheets = (sheet) => {
+                            let sheets = [];
+                            if (sheet.sheetType === 'worksheet') {
+                                sheets.push(sheet);
+                            } else if (sheet.sheetType === 'dashboard') {
+                                if (sheet.worksheets) {
+                                    sheet.worksheets.forEach(ws => {
+                                        sheets = sheets.concat(getAllWorksheets(ws));
+                                    });
+                                }
+                            } else if (sheet.sheetType === 'story') {
+                                if (sheet.activeStoryPoint && sheet.activeStoryPoint.containedSheet) {
+                                    sheets = sheets.concat(getAllWorksheets(sheet.activeStoryPoint.containedSheet));
+                                }
+                            }
+                            return sheets;
+                        };
+
+                        const allWorksheets = getAllWorksheets(activeSheet);
+                        const uniqueWorksheets = [];
+                        const seenNames = new Set();
+                        allWorksheets.forEach(ws => {
+                            if (!seenNames.has(ws.name)) {
+                                seenNames.add(ws.name);
+                                uniqueWorksheets.push(ws);
+                            }
+                        });
+
+                        console.log(`[${index}] Found ${uniqueWorksheets.length} UNIQUE worksheets.`);
+
+                        // Apply user-selected filters to all worksheets before extracting data
+                        if (Object.keys(filters).length > 0) {
+                            console.log(`[${index}] Applying ${Object.keys(filters).length} filter(s) to viz worksheets...`);
+                            for (const [filterName, filterValue] of Object.entries(filters)) {
+                                for (const ws of uniqueWorksheets) {
+                                    try {
+                                        await ws.applyFilterAsync(filterName, [filterValue], 'replace');
+                                    } catch (fe) {
+                                        // Field may not exist in this particular worksheet — expected
+                                    }
+                                }
+                            }
+                            // Allow filtered data to propagate before reading
+                            await new Promise(resolve => setTimeout(resolve, 1500));
+                            console.log(`[${index}] Filters applied. Proceeding to extract data.`);
+                        }
+
+                        this.innerHTML = `<i class="fas fa-download"></i> Fetching ${uniqueWorksheets.length} Sheets...`;
+
+                        for (const sheet of uniqueWorksheets) {
+                            let retryCount = 0;
+                            const maxRetries = 1;
+                            let success = false;
+                            
+                            while (retryCount <= maxRetries && !success) {
+                                try {
+                                    if (retryCount > 0) await new Promise(resolve => setTimeout(resolve, 500));
+                                    
+                                    this.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Capturing ${sheet.name}...`;
+                                    try { await viz.workbook.activateSheetAsync(sheet.name); } catch (e) {}
+
+                                    console.log(`[${index}] Attempting extraction for "${sheet.name}" (Retry: ${retryCount})`);
+                                    let dataTable = null;
+                                    
+                                    // 1. Try New Reader API
+                                    if (typeof sheet.getSummaryDataReaderAsync === 'function') {
+                                        try {
+                                            console.log(`[${index}] Trying getSummaryDataReaderAsync(100)...`);
+                                            const reader = await sheet.getSummaryDataReaderAsync(100);
+                                            dataTable = await reader.getAllPagesAsync();
+                                            await reader.releaseAsync();
+                                            console.log(`[${index}] Reader returned ${dataTable ? dataTable.data.length : 0} rows.`);
+                                        } catch (readerErr) {
+                                            console.warn(`[${index}] Reader API failed:`, readerErr);
+                                        }
+                                    }
+
+                                    // 2. Fallback to Legacy if Reader failed or returned 0 rows
+                                    if (!dataTable || !dataTable.data || dataTable.data.length === 0) {
+                                        console.log(`[${index}] Trying legacy getSummaryDataAsync...`);
+                                        dataTable = await sheet.getSummaryDataAsync();
+                                        console.log(`[${index}] Legacy returned ${dataTable ? dataTable.data.length : 0} rows.`);
+                                    }
+
+                                    if (!dataTable || !dataTable.data || dataTable.data.length === 0) {
+                                      throw new Error("Both Reader and Legacy returned no data");
+                                    }
+
+                                    console.log(`[${index}] SUCCESS: Retrieved ${dataTable.data.length} rows for "${sheet.name}"`);
+                                    console.log(`[${index}] Columns:`, dataTable.columns.map(c => c.fieldName));
+                                    
+                                    if (!window.extractionStats) window.extractionStats = {};
+                                    window.extractionStats[sheet.name] = dataTable.data.length;
+
+                                    combinedCsv += `=== Sheet: ${sheet.name} ===\n`;
+                                    const columns = dataTable.columns.map(c => c.fieldName).join(',');
+                                    combinedCsv += columns + '\n';
+                                    
+                                    // Guard against weird data structure
+                                    if (Array.isArray(dataTable.data)) {
+                                        dataTable.data.forEach((row, rowIndex) => {
+                                            try {
+                                                const rowStr = row.map(cell => {
+                                                    let val = cell.formattedValue !== undefined ? cell.formattedValue : cell.value;
+                                                    if (val === null || val === undefined) val = '';
+                                                    val = String(val).replace(/"/g, '""');
+                                                    return `"${val}"`;
+                                                }).join(',');
+                                                combinedCsv += rowStr + '\n';
+                                            } catch (rowErr) {
+                                                console.error(`[${index}] Error parsing row ${rowIndex} in ${sheet.name}:`, rowErr);
+                                            }
+                                        });
+                                    }
+                                    combinedCsv += '\n';
+                                    success = true;
+                                } catch (sheetErr) {
+                                    console.error(`[${index}] Sheet "${sheet.name}" extraction error:`, sheetErr);
+                                    retryCount++;
+                                    if (retryCount > maxRetries) {
+                                        console.warn(`[${index}] Skipping sheet "${sheet.name}" after ${maxRetries + 1} attempt(s): ${sheetErr.message}`);
+                                        // Do not add failed sheets to CSV — they contain no usable data
+                                    }
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Data extraction failed:', err);
+                    }
+                    console.log(`[${index}] Extraction complete. Sending ${combinedCsv.length} chars to backend for Vision-AI merge.`);
+                    exportFired = true;
+                    cleanupViz();
+                    executeBackendExport(combinedCsv);
+                });
+
+                document.body.appendChild(container);
+                container.appendChild(viz);
+            });
+        });
+
+        // Add manual filter button
+        document.querySelectorAll('.add-manual-filter').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const index = this.dataset.workbookIndex;
+                const filterContainer = document.getElementById(`filter-container-${index}`);
+                if (filterContainer.querySelector('.italic')) {
+                    filterContainer.innerHTML = '';
+                }
+
+                const div = document.createElement('div');
+                div.className = 'mb-2 position-relative';
+                div.innerHTML = `
+                    <label class="small text-muted mb-1 d-block">Custom Filter</label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control filter-name-input" placeholder="Name">
+                        <input type="text" class="form-control filter-input" placeholder="Value">
+                        <button class="btn btn-outline-secondary remove-filter" type="button"><i data-feather="x" style="width:12px;"></i></button>
+                    </div>
+                `;
+                filterContainer.appendChild(div);
+                feather.replace();
+                revertExportButton(index);
+            });
+        });
+
+        // Delegate manual filter name changes
+        document.addEventListener('input', function (e) {
+            if (e.target.classList.contains('filter-name-input')) {
+                const val = e.target.value.trim();
+                const filterInput = e.target.closest('.input-group').querySelector('.filter-input');
+                if (filterInput) filterInput.dataset.filterName = val;
+            }
+        });
+
+        // Handle filter removal
+        document.addEventListener('click', function (e) {
+            const removeBtn = e.target.closest('.remove-filter');
+            if (removeBtn) {
+                const container = removeBtn.closest('[data-workbook-index]');
+                const index = container ? container.dataset.workbookIndex : null;
+                removeBtn.closest('.mb-2').remove();
+                if (index !== null) revertExportButton(index);
+            }
+        });
+
+        // Crop Configuration
+        let croppingIndex = null;
+        let pendingPngFilename = null;
+        let canvas, ctx, selection, img;
+        let isDrawing = false, startX, startY, endX, endY;
+
+        document.querySelectorAll('.crop-btn').forEach(btn => {
+            btn.addEventListener('click', function (e) {
+                e.preventDefault();
+                croppingIndex = this.dataset.workbookIndex;
+                const exportBtn = document.querySelector(`.export-btn[data-workbook-index="${croppingIndex}"]`);
+                pendingPngFilename = exportBtn ? exportBtn.dataset.pngFilename : null;
+
+                if (!pendingPngFilename) {
+                    alert('Please prepare the image before configuring crop.');
+                    return;
+                }
+
+                const modalEl = document.getElementById('cropModal');
+                const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+                modal.show();
+            });
+        });
+
+        // Use shown.bs.modal to ensure the container has dimensions
+        const cropModalEl = document.getElementById('cropModal');
+        if (cropModalEl) {
+            cropModalEl.addEventListener('shown.bs.modal', function () {
+                if (!pendingPngFilename) return;
+
+                const container = document.getElementById('crop-canvas-container');
+                container.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Loading dashboard image...</p></div>';
+
+                img = new Image();
+                img.onload = function () {
+                    container.innerHTML = '';
+                    canvas = document.createElement('canvas');
+                    canvas.id = 'cropCanvas';
+                    canvas.className = 'shadow-sm rounded';
+                    container.appendChild(canvas);
+
+                    const maxWidth = container.clientWidth || 1000;
+                    const scale = maxWidth / img.width;
+                    canvas.width = img.width * scale;
+                    canvas.height = img.height * scale;
+
+                    ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    initCanvasEvents();
+                };
+                img.onerror = function () {
+                    container.innerHTML = '<div class="text-danger p-5 text-center"><i data-feather="alert-circle" class="mb-2"></i><br>Failed to load dashboard image. Please close this window and click "Prepare Image" again.</div>';
+                    feather.replace();
+                };
+                img.src = `/uploads/${pendingPngFilename}?t=${new Date().getTime()}`;
+            });
+        }
+
+        function initCanvasEvents() {
+            canvas.addEventListener('mousedown', e => {
+                isDrawing = true;
+                const rect = canvas.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+            });
+
+            canvas.addEventListener('mousemove', e => {
+                if (!isDrawing) return;
+                const rect = canvas.getBoundingClientRect();
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                ctx.strokeStyle = '#ffc107';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(0, 0, canvas.width, startY);
+                ctx.fillRect(0, endY, canvas.width, canvas.height - endY);
+                ctx.fillRect(0, startY, startX, endY - startY);
+                ctx.fillRect(endX, startY, canvas.width - endX, endY - startY);
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                isDrawing = false;
+                selection = {
+                    x: Math.min(startX, endX),
+                    y: Math.min(startY, endY),
+                    w: Math.abs(endX - startX),
+                    h: Math.abs(endY - startY)
+                };
+            });
+        }
+
+        document.getElementById('saveCropBtn').addEventListener('click', function () {
+            if (!selection || selection.w < 10) return alert('Select area.');
+            const pngFilename = document.querySelector(`.export-btn[data-workbook-index="${croppingIndex}"]`).dataset.pngFilename;
+
+            // Map canvas coordinates back to original image dimensions for precision
+            const scaleFactor = img.naturalWidth / canvas.width;
+            const scaledCrop = {
+                x: selection.x * scaleFactor,
+                y: selection.y * scaleFactor,
+                width: selection.w * scaleFactor,
+                height: selection.h * scaleFactor
+            };
+
+            this.disabled = true;
+            this.textContent = 'Saving...';
+
+            fetch('/crop_dashboard', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: pngFilename,
+                    workbook_index: parseInt(croppingIndex),
+                    crop_data: scaledCrop
+                })
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { throw new Error(err.error || err.detail || 'Server error'); });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        const previewSection = document.querySelector(`.preview-section[data-workbook-index="${croppingIndex}"]`);
+
+                        // Update cropped image (cache-busted filename is already unique per crop)
+                        previewSection.querySelector('.preview-placeholder').innerHTML =
+                            `<img src="/uploads/${data.cropped_filename}?t=${Date.now()}" class="img-fluid" alt="Crop" style="width:100%;max-width:1000px;">`;
+
+                        // Sheet name badge below image
+                        let sheetLabel = previewSection.querySelector('.matched-sheet-label');
+                        if (!sheetLabel) {
+                            sheetLabel = document.createElement('div');
+                            sheetLabel.className = 'matched-sheet-label mt-2';
+                            previewSection.appendChild(sheetLabel);
+                        }
+                        sheetLabel.innerHTML = data.matched_sheet
+                            ? `<div style="display:inline-flex;align-items:center;gap:6px;background:rgba(13,202,240,.1);border:1px solid rgba(13,202,240,.3);border-radius:16px;padding:4px 12px;font-size:12px;color:#0dcaf0;">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                                    Sheet: <strong>${escHtmlZ(data.matched_sheet)}</strong>
+                               </div>`
+                            : '';
+
+                        // Status badge
+                        const statusBadge = document.getElementById(`crop-status-${croppingIndex}`);
+                        if (statusBadge) {
+                            statusBadge.innerHTML = `<span class="badge bg-success bg-opacity-10 text-success rounded-circle p-2" data-bs-toggle="tooltip" title="Cropped"><i data-feather="check"></i></span>`;
+                            feather.replace();
+                        }
+
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('cropModal'));
+                        if (modal) modal.hide();
+
+                        // Inject "Show Data" button below the preview image
+                        updateCSVUI(croppingIndex, data);
+
+                        checkCombineAndPresetReady();
+                    } else {
+                        alert('Error saving crop: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Crop Error:', error);
+                    alert('Failed to save crop: ' + error.message);
+                })
+                .finally(() => {
+                    this.disabled = false;
+                    this.textContent = 'Save Crop';
+                });
+        });
+
+        function checkCombineAndPresetReady() {
+            const cropStatuses = document.querySelectorAll(".crop-status .badge.bg-success, .crop-status .badge .text-success");
+            const totalWorkbooks = {{ session.workbook_count or 0 }};
+            const combineSection = document.getElementById("combine-section");
+            if (combineSection) combineSection.style.display = cropStatuses.length === totalWorkbooks ? "block" : "none";
+
+            const saveBtn = document.getElementById("savePresetButton");
+            if (saveBtn) saveBtn.disabled = cropStatuses.length === 0;
+
+            const countText = document.getElementById('cropped-count-text');
+            if (countText) countText.textContent = `${cropStatuses.length} of ${totalWorkbooks} processed`;
+        }
+
+        // Handle Save Preset via AJAX
+        const presetForm = document.getElementById('save-preset-form');
+    if (presetForm) {
+        presetForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const btn = this.querySelector('button[type="submit"]');
+            const originalHtml = btn.innerHTML;
+            const name = this.querySelector('input[name="name"]').value;
+            const description = this.querySelector('textarea[name="description"]').value;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Saving...';
+
+            fetch('/api/save_preset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: name,
+                    description: description
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Close background Selenium sessions now that the preset is saved
+                        fetch('/api/close-selenium-sessions', { method: 'POST' })
+                            .then(r => r.json())
+                            .then(d => console.log(`[Selenium] Closed ${d.closed} session(s) after Save Preset`))
+                            .catch(err => console.warn('[Selenium] close-sessions error:', err));
+
+                        alert('Preset saved successfully!');
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('presetModal'));
+                        if (modal) modal.hide();
+                    } else {
+                        throw new Error(data.error || 'Failed to save preset');
+                    }
+                })
+                .catch(error => alert('Error: ' + error.message))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                });
+        });
+    }
+
+    // Handle Combine & Export via AJAX to ensure JSON compatibility and cleaner feedback
+    const combineForm = document.getElementById('combine-form');
+    if (combineForm) {
+        combineForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const btn = document.getElementById('combineButton');
+            const originalHtml = btn.innerHTML;
+            const filename = combineForm.querySelector('input[name="filename"]').value;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Generating...';
+
+            fetch(combineForm.action, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: filename,
+                    format: 'pdf' // Defaulting to PDF as per the current form's intent
+                })
+            })
+                .then(async response => {
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename.endsWith('.pdf') ? filename : filename + '.pdf';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        window.URL.revokeObjectURL(url);
+                    } else {
+                        const err = await response.json();
+                        throw new Error(err.error || 'Export failed');
+                    }
+                })
+                .catch(error => alert('Error: ' + error.message))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                });
+        });
+    }
+    });
+</script>
+{% endblock %}

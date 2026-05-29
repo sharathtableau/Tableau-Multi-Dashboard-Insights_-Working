@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns="http://www.tableau.com/schemas/extension/manifest" manifest-version="1.0">
+  <dashboard-extension id="com.example.tableau-cropper" extension-version="1.0.0">
+    <default-locale>en_US</default-locale>
+    <name resource-id="name">Tableau Dashboard Cropper</name>
+    <description>Extract worksheet data using the Extensions API</description>
+    <author name="Developer" email="dev@example.com" organization="Example Org" website="https://example.com"/>
+    <min-api-version>1.10</min-api-version>
+    <source-location>
+      <url>https://localhost:5000/extension</url>
+    </source-location>
+    <icon></icon>
+    <permissions>
+      <permission>full data</permission>
+    </permissions>
+    <context-menu>
+      <configure-context-menu-item />
+    </context-menu>
+  </dashboard-extension>
+  <resources>
+    <resource id="name">
+      <text locale="en_US">Tableau Dashboard Cropper</text>
+    </resource>
+  </resources>
+</manifest>

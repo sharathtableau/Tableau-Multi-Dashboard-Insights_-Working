@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(unzip -l \"/Users/bharathmounika/Downloads/E-Commerce \\(Software\\) Sales Dashboard #VOTD.twbx\")",
+      "Read(//private/tmp/**)",
+      "Bash(unzip -q \"/Users/bharathmounika/Downloads/E-Commerce \\(Software\\) Sales Dashboard #VOTD.twbx\" \"E-Commerce \\(Software\\) Sales Dashboard.twb\")",
+      "Bash(python3 -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(pip3 list:*)",
+      "Read(//Users/bharathmounika/.pyenv/**)",
+      "Bash(conda env:*)",
+      "Bash(/opt/homebrew/Cellar/python@3.13/3.13.9_1/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -c \"import pandas; print\\(''pandas ok''\\); import tableauhyperapi; print\\(''hyper ok''\\)\")",
+      "Bash(pip3.13 list:*)",
+      "Bash(python3.9 -c \"import tableauhyperapi; print\\(''''found at'''', tableauhyperapi.__file__\\)\")",
+      "Bash(source venv/bin/activate)",
+      "Bash(python test_hyper_reconstruction.py)",
+      "Bash(python3 test_hyper_reconstruction.py)",
+      "Bash(pip3 install:*)",
+      "Bash(grep -r \"PORT\\\\|port\\\\|5000\\\\|5001\\\\|5002\" '/Users/bharathmounika/Documents/Sharath/#1 TableauDashboardCropper-tableau - Filters_Latest' --include=*.py --include=*.txt --include=*.toml --include=*.yml --include=*.yaml)",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}

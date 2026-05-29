@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS files
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# Runtime folders
+uploads/
+output/
+selenium_downloads/
+tableau_exports/
+user_tableau_exports/
+dummy/
+data/
