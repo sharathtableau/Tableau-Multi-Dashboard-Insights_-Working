@@ -1,0 +1,46 @@
+# Secrets
+.env
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS files
+.DS_Store
+__MACOSX/
+Thumbs.db
+
+# Runtime folders - never commit
+uploads/
+output/
+selenium_downloads/
+tableau_exports/
+user_tableau_exports/
+dummy/
+data/
+*.log
+
+# Large/unnecessary files
+reports/
+Snapshot_Insights_Demo.pptx
+image_processor.py_header_fix.py
+check_models.py
+*.pdf
+*.pptx
+*.twb
+*.twbx
+*.twbr
+*.trex
+uv.lock
+hyperd.log
+.claude/
+.replit
+push_to_github.bat
+push_to_github.ps1
