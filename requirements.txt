@@ -36,3 +36,5 @@ tableauserverclient
 pandas>=2.0.0
 anthropic
 tableauhyperapi
+
+opencv-python-headless
