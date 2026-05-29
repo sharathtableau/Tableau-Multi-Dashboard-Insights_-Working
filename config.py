@@ -29,10 +29,10 @@ EMAIL_SMTP_PORT = 587
 
 # Automation Credentials (for background jobs)
 # Providing these allows scheduled jobs to run without user session
-AUTO_TABLEAU_TOKEN_NAME = "test"
-AUTO_TABLEAU_TOKEN_KEY = "ECKzRFtESSm35pv3NqPJnw==:2lIPV1UuPrGhvY0J8yOtzs43nbPCKNqn"
+AUTO_TABLEAU_TOKEN_NAME = "tableau"
+AUTO_TABLEAU_TOKEN_KEY = "qBjfKYUmTCGMX9wX9dwc5g==:zv4RSIAO6isHVsmzzUsGlm81FPx6AKu9"
 
 # Selenium Extraction Credentials (for headless browser login to Tableau)
 # These are your direct Tableau Online login email + password
-SELENIUM_USERNAME = "buqitegi@denipl.net"
-SELENIUM_PASSWORD = "4YmpJwg0haKy@"
+SELENIUM_USERNAME = "tei.na.al.v.a.ro@gmail.com"
+SELENIUM_PASSWORD = "0HfnKK5ahaKy@"
