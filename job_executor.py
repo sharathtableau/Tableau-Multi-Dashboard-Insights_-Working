@@ -127,6 +127,32 @@ def execute_preset_workflow(preset_data, server_url=None, site_id=None, token_na
 
                 csv_data = extractor.reconstruct_csv(df_master, matched_sheets, worksheet_defs)
                 logging.info(f"CSV extracted for preset slide {i+1}: {len(csv_data)} chars, sheets={matched_sheets}")
+
+                # Live-connection workbooks have no embedded extract, so Hyper
+                # reconstruction yields nothing. Fall back to Tableau-computed
+                # crosstabs via the REST API — same numbers the dashboard shows.
+                if not (csv_data and csv_data.strip()):
+                    print(f"[JOB] No Hyper data for '{dashboard_name}' (live connection?) — "
+                          f"falling back to REST crosstab export", flush=True)
+                    full_csv = tableau.export_all_sheets_as_csv(
+                        target_workbook['id'], filters=saved_filters,
+                        max_rows_per_sheet=500, dashboard_name=dashboard_name)
+                    if full_csv and matched_sheets:
+                        # Keep only the sheet(s) behind the crop — same filtering
+                        # the interactive crop flow applies.
+                        targets = {s.lower().replace(" ", "").replace("_", "")
+                                   for s in matched_sheets}
+                        keep, in_sheet = [], False
+                        for line in full_csv.splitlines():
+                            if line.startswith("=== Sheet:"):
+                                norm = line.lower().replace(" ", "").replace("_", "")
+                                in_sheet = any(t in norm for t in targets)
+                            if in_sheet:
+                                keep.append(line)
+                        csv_data = "\n".join(keep) if keep else full_csv
+                    else:
+                        csv_data = full_csv or ''
+                    logging.info(f"REST fallback CSV for preset slide {i+1}: {len(csv_data)} chars")
             except Exception as csv_err:
                 logging.warning(f"CSV extraction failed for preset slide {i+1} (non-fatal): {csv_err}")
 
