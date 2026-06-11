@@ -93,6 +93,9 @@
         </main>
     </div>
 
+    <!-- Global toast notifications (replaces browser alert() popups) -->
+    <div id="toast-container" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1090;"></div>
+
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/feather-icons"></script>
@@ -100,6 +103,34 @@
         document.addEventListener('DOMContentLoaded', function () {
             feather.replace();
         });
+
+        window.showToast = function (message, type = 'error') {
+            const styles = {
+                error: 'text-bg-danger', success: 'text-bg-success',
+                warning: 'text-bg-warning', info: 'text-bg-dark'
+            };
+            const container = document.getElementById('toast-container');
+            if (!container) { alert(message); return; }
+            const el = document.createElement('div');
+            el.className = `toast align-items-center border-0 shadow ${styles[type] || styles.info}`;
+            el.setAttribute('role', 'alert');
+            const body = document.createElement('div');
+            body.className = 'd-flex';
+            const msg = document.createElement('div');
+            msg.className = 'toast-body fw-medium';
+            msg.textContent = message;  // textContent — never inject markup
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'btn-close me-2 m-auto' + (type === 'warning' ? '' : ' btn-close-white');
+            close.setAttribute('data-bs-dismiss', 'toast');
+            body.appendChild(msg);
+            body.appendChild(close);
+            el.appendChild(body);
+            container.appendChild(el);
+            const t = new bootstrap.Toast(el, { delay: type === 'error' ? 7000 : 4000 });
+            t.show();
+            el.addEventListener('hidden.bs.toast', () => el.remove());
+        };
     </script>
     {% block scripts %}{% endblock %}
 </body>

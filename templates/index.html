@@ -943,8 +943,10 @@ function escHtmlZ(s) {
                                 <button type="submit" class="btn btn-primary btn-lg btn-modern-shiny w-100"
                                     id="combineButton">
                                     <i data-feather="package" class="me-2"></i>
-                                    <span>Combine & Export</span>
+                                    <span>Generate Report</span>
                                 </button>
+                                <!-- Live pipeline steps shown while the report generates -->
+                                <div id="generation-progress" class="small px-1" style="display:none;"></div>
                             </div>
 
                             <div class="mt-4 pt-4 border-top border-secondary border-opacity-25">
@@ -1119,12 +1121,48 @@ function escHtmlZ(s) {
             }
         }
 
+        // Applied-filter chips: glanceable summary under each filter section
+        function updateFilterChips(index) {
+            const container = document.getElementById(`filter-container-${index}`);
+            if (!container) return;
+            let chips = document.getElementById(`filter-chips-${index}`);
+            if (!chips) {
+                chips = document.createElement('div');
+                chips.id = `filter-chips-${index}`;
+                chips.className = 'mt-2';
+                container.insertAdjacentElement('afterend', chips);
+            }
+            const badges = [];
+            container.querySelectorAll('.filter-input').forEach(inp => {
+                const v = (inp.value || '').trim();
+                if (v) {
+                    const chip = document.createElement('span');
+                    chip.className = 'badge bg-info bg-opacity-10 text-info rounded-pill px-2 py-1 me-1 mb-1';
+                    chip.style.fontSize = '0.65rem';
+                    chip.textContent = `${inp.dataset.filterName}: ${v}`;
+                    badges.push(chip);
+                }
+            });
+            chips.innerHTML = badges.length
+                ? '<div class="xx-small text-muted fw-bold mb-1" style="letter-spacing:0.5px;">APPLIED FILTERS</div>' : '';
+            badges.forEach(c => chips.appendChild(c));
+        }
+
         // Global listener for filter changes (event delegation)
         document.addEventListener('input', function (e) {
             if (e.target.classList.contains('filter-input')) {
                 const workbookCol = e.target.closest('[data-workbook-index]');
                 const index = workbookCol ? workbookCol.dataset.workbookIndex : null;
-                if (index !== null) revertExportButton(index);
+                if (index !== null) {
+                    revertExportButton(index);
+                    updateFilterChips(index);
+                }
+            }
+        });
+        document.addEventListener('change', function (e) {
+            if (e.target.classList.contains('filter-input')) {
+                const workbookCol = e.target.closest('[data-workbook-index]');
+                if (workbookCol) updateFilterChips(workbookCol.dataset.workbookIndex);
             }
         });
 
@@ -1161,7 +1199,7 @@ function escHtmlZ(s) {
                         });
                         wbSelect.disabled = false;
                     })
-                    .catch(error => alert('Error loading workbooks: ' + error.message));
+                    .catch(error => showToast('Error loading workbooks: ' + error.message));
             });
         });
 
@@ -1281,7 +1319,7 @@ function escHtmlZ(s) {
                         });
                         dsSelect.disabled = false;
                     })
-                    .catch(error => alert('Error loading dashboards: ' + error.message));
+                    .catch(error => showToast('Error loading dashboards: ' + error.message));
 
                 // Fetch data source info for As-of-Date
                 if (dsInfoBox) {
@@ -1631,7 +1669,7 @@ function escHtmlZ(s) {
                     })
                     .catch(error => {
                         console.error('Error:', error);
-                        alert('Error: ' + error.message);
+                        showToast('Error: ' + error.message);
                         this.innerHTML = originalContent;
                     })
                     .finally(() => this.disabled = false);
@@ -1969,7 +2007,7 @@ function escHtmlZ(s) {
                 pendingPngFilename = exportBtn ? exportBtn.dataset.pngFilename : null;
 
                 if (!pendingPngFilename) {
-                    alert('Please prepare the image before configuring crop.');
+                    showToast('Please prepare the image before configuring crop.', 'warning');
                     return;
                 }
 
@@ -2053,7 +2091,7 @@ function escHtmlZ(s) {
         }
 
         document.getElementById('saveCropBtn').addEventListener('click', function () {
-            if (!selection || selection.w < 10) return alert('Select area.');
+            if (!selection || selection.w < 10) return showToast('Select an area to crop first.', 'warning');
             const pngFilename = document.querySelector(`.export-btn[data-workbook-index="${croppingIndex}"]`).dataset.pngFilename;
 
             // Map canvas coordinates back to original image dimensions for precision
@@ -2120,12 +2158,12 @@ function escHtmlZ(s) {
 
                         checkCombineAndPresetReady();
                     } else {
-                        alert('Error saving crop: ' + (data.error || 'Unknown error'));
+                        showToast('Error saving crop: ' + (data.error || 'Unknown error'));
                     }
                 })
                 .catch(error => {
                     console.error('Crop Error:', error);
-                    alert('Failed to save crop: ' + error.message);
+                    showToast('Failed to save crop: ' + error.message);
                 })
                 .finally(() => {
                     this.disabled = false;
@@ -2178,9 +2216,9 @@ function escHtmlZ(s) {
                             .catch(err => console.warn('[Selenium] close-sessions error:', err));
 
                         if (data.warning) {
-                            alert('⚠️ ' + data.warning);
+                            showToast(data.warning, 'warning');
                         } else {
-                            alert('Preset saved successfully!');
+                            showToast('Preset saved successfully!', 'success');
                         }
                         const modal = bootstrap.Modal.getInstance(document.getElementById('presetModal'));
                         if (modal) modal.hide();
@@ -2188,7 +2226,7 @@ function escHtmlZ(s) {
                         throw new Error(data.error || 'Failed to save preset');
                     }
                 })
-                .catch(error => alert('Error: ' + error.message))
+                .catch(error => showToast('Error: ' + error.message))
                 .finally(() => {
                     btn.disabled = false;
                     btn.innerHTML = originalHtml;
@@ -2210,6 +2248,37 @@ function escHtmlZ(s) {
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Generating...';
 
+            // Step timeline — narrates the pipeline while the report generates
+            const fmtLabel = format === 'pdf' ? 'PDF' : (format === 'docx' ? 'Word' : 'PowerPoint');
+            const steps = ['Preparing cropped images', 'Extracting backend data',
+                           'AI writing insights', 'Building ' + fmtLabel + ' report'];
+            const progWrap = document.getElementById('generation-progress');
+            const setStep = (i, state) => {
+                const row = document.getElementById('gen-step-' + i);
+                if (!row) return;
+                const icon = row.querySelector('.gen-step-icon');
+                if (state === 'done') {
+                    icon.innerHTML = '<span class="text-success fw-bold">&#10003;</span>';
+                    row.classList.remove('text-muted', 'opacity-50');
+                } else if (state === 'active') {
+                    icon.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" style="width:0.8rem;height:0.8rem;border-width:2px;"></span>';
+                    row.classList.remove('text-muted', 'opacity-50');
+                } else {
+                    icon.innerHTML = '<span>&#9675;</span>';
+                }
+            };
+            if (progWrap) {
+                progWrap.innerHTML = steps.map((s, i) =>
+                    `<div class="d-flex align-items-center gap-2 py-1 text-muted opacity-50" id="gen-step-${i}">
+                        <span class="gen-step-icon d-inline-flex justify-content-center" style="width:1.1rem;"></span><span>${s}</span></div>`).join('');
+                progWrap.style.display = 'block';
+                setStep(0, 'active');
+            }
+            const genTimers = [
+                setTimeout(() => { setStep(0, 'done'); setStep(1, 'active'); }, 1800),
+                setTimeout(() => { setStep(1, 'done'); setStep(2, 'active'); }, 6000)
+            ];
+
             fetch(combineForm.action, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2220,6 +2289,8 @@ function escHtmlZ(s) {
             })
                 .then(async response => {
                     if (response.ok) {
+                        genTimers.forEach(clearTimeout);
+                        [0, 1, 2, 3].forEach(i => setStep(i, 'done'));
                         const blob = await response.blob();
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
@@ -2234,10 +2305,12 @@ function escHtmlZ(s) {
                         throw new Error(err.error || 'Export failed');
                     }
                 })
-                .catch(error => alert('Error: ' + error.message))
+                .catch(error => showToast('Error: ' + error.message))
                 .finally(() => {
+                    genTimers.forEach(clearTimeout);
                     btn.disabled = false;
                     btn.innerHTML = originalHtml;
+                    if (progWrap) setTimeout(() => { progWrap.style.display = 'none'; }, 2000);
                 });
         });
     }

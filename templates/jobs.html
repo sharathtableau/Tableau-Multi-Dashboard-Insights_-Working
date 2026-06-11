@@ -50,6 +50,10 @@
                                                 <div>
                                                     <span class="fw-bold d-block">{{ preset.name }}</span>
                                                     <span class="xx-small text-muted">{{ preset.id[:8] }}...</span>
+                                                    <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill px-2 mt-1 d-inline-block"
+                                                        style="font-size: 0.6rem; letter-spacing: 0.5px;">
+                                                        {{ (preset.output_format or 'pptx')|upper }}
+                                                    </span>
                                                 </div>
                                             </div>
                                         </td>
@@ -470,10 +474,10 @@
             if (result.success) {
                 window.location.reload();
             } else {
-                alert('Error: ' + result.error);
+                showToast('Error: ' + result.error);
             }
         } catch (error) {
-            alert('Error saving settings: ' + error.message);
+            showToast('Error saving settings: ' + error.message);
         }
     }
 
@@ -559,11 +563,11 @@
             if (result.success) {
                 window.location.reload();
             } else {
-                alert('Error deleting preset: ' + (result.error || 'Unknown error'));
+                showToast('Error deleting preset: ' + (result.error || 'Unknown error'));
             }
         } catch (error) {
             console.error('Error:', error);
-            alert('Error deleting preset: ' + error.message);
+            showToast('Error deleting preset: ' + error.message);
         }
     }
 </script>
