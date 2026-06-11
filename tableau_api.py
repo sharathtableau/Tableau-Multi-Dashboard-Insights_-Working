@@ -1732,6 +1732,142 @@ class TableauHyperExtractor:
         return res.content
 
     @staticmethod
+    def _filter_field_from_column(column_attr: str):
+        """Parse a .twb filter column attr into (field_name, kind), or None for
+        Tableau internals that are not user-facing filters.
+        '[federated.x].[none:channel:nk]'  → ('channel', 'categorical')
+        '[federated.x].[yr:ORDER_DATE:ok]' → ('ORDER_DATE', 'year')
+        '[federated.x].[:Measure Names]'   → None
+        '[federated.x].[Action (Product)]' → None (dashboard action)"""
+        if not column_attr:
+            return None
+        # Split on '].[' (not '.') — field names may themselves contain dots,
+        # e.g. '[federated.x].[Action (Metric Calc. Symbol,Country)]'
+        token = column_attr.split('].[')[-1].strip('[]')
+        if token.startswith('Action ('):
+            return None
+        parts = token.split(':')
+        kind = 'categorical'
+        if len(parts) == 3:
+            field = parts[1]
+            if parts[0] == 'yr':
+                kind = 'year'
+        elif len(parts) == 2:
+            field = parts[1] or parts[0]
+        else:
+            field = parts[0]
+        field = field.strip()
+        if not field or field.lower() in ('measure names', 'measure values'):
+            return None
+        return field, kind
+
+    def get_dashboard_filter_options(self, workbook_content: bytes, dashboard_name: str, max_values: int = 200) -> List[Dict]:
+        """Discover the categorical filters of a dashboard from the .twb XML and
+        their possible values from the .hyper extract. Powers value-aware filter
+        dropdowns so users pick exact (case-correct) values instead of typing.
+        Returns [{'name': display_name, 'kind': 'categorical'|'year', 'values': [...]}]."""
+        import re as _re
+        import uuid as _uuid
+
+        hyper_path = os.path.join(self.output_dir, f"filteropt_{_uuid.uuid4().hex}.hyper")
+        has_hyper = False
+        try:
+            xml_bytes = workbook_content
+            if zipfile.is_zipfile(io.BytesIO(workbook_content)):
+                with zipfile.ZipFile(io.BytesIO(workbook_content)) as z:
+                    twb_files = [f for f in z.namelist() if f.endswith('.twb')]
+                    hyper_files = [f for f in z.namelist() if f.endswith('.hyper')]
+                    if not twb_files:
+                        return []
+                    xml_bytes = z.read(twb_files[0])
+                    if hyper_files:
+                        with z.open(hyper_files[0]) as hf, open(hyper_path, 'wb') as out:
+                            out.write(hf.read())
+                        has_hyper = True
+
+            root = ET.fromstring(xml_bytes)
+
+            def norm(s):
+                return _re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+            # Caption map: internal names (e.g. Calculation_123...) → display names
+            captions = {}
+            for col in root.iter('column'):
+                nm, cap = col.attrib.get('name', ''), col.attrib.get('caption')
+                if nm and cap:
+                    captions[nm.strip('[]').lower()] = cap
+
+            # Worksheets that belong to the target dashboard
+            target = norm(dashboard_name)
+            sheet_names = set()
+            for dash in root.iter('dashboard'):
+                dn = dash.attrib.get('name', '')
+                if not (dn == dashboard_name or norm(dn) == target
+                        or (target and target in norm(dn))):
+                    continue
+                for zone in dash.iter('zone'):
+                    zn = zone.attrib.get('name')
+                    if zn:
+                        sheet_names.add(norm(zn))
+            if not sheet_names:
+                sheet_names = {norm(ws.attrib.get('name', '')) for ws in root.iter('worksheet')}
+
+            found = {}
+            for ws in root.iter('worksheet'):
+                if norm(ws.attrib.get('name', '')) not in sheet_names:
+                    continue
+                for f in ws.iter('filter'):
+                    if f.attrib.get('class') != 'categorical':
+                        continue
+                    parsed = self._filter_field_from_column(f.attrib.get('column', ''))
+                    if not parsed:
+                        continue
+                    field, kind = parsed
+                    display = captions.get(field.lower(), field)
+                    found.setdefault(field.lower(),
+                                     {'name': display, 'kind': kind, 'values': []})
+
+            # Distinct values from the extract — exact casing for the dropdowns
+            if found and has_hyper:
+                try:
+                    df = self._read_hyper(hyper_path)
+                    norm_cols = {norm(c): c for c in df.columns}
+                    for fkey, opt in found.items():
+                        key = norm(fkey)
+                        col = norm_cols.get(key) or next(
+                            (c for k, c in norm_cols.items()
+                             if key and (key in k or k in key)), None)
+                        if col is None:
+                            continue
+                        series = df[col].dropna()
+                        if opt['kind'] == 'year':
+                            try:
+                                years = {str(pd.to_datetime(str(v)).year)
+                                         for v in series.unique()}
+                                opt['values'] = sorted(years)
+                            except Exception:
+                                pass
+                        else:
+                            vals = sorted({str(v) for v in series.unique()})
+                            opt['values'] = vals[:max_values]
+                except Exception as e:
+                    logging.warning(f"filter-options: Hyper value read failed (non-fatal): {e}")
+
+            options = sorted(found.values(), key=lambda o: o['name'].lower())
+            logging.info(f"filter-options: {len(options)} filter(s) for '{dashboard_name}': "
+                         f"{[(o['name'], len(o['values'])) for o in options]}")
+            return options
+        except Exception as e:
+            logging.error(f"get_dashboard_filter_options failed: {e}")
+            return []
+        finally:
+            try:
+                if os.path.exists(hyper_path):
+                    os.remove(hyper_path)
+            except Exception:
+                pass
+
+    @staticmethod
     def get_dashboard_design_size(workbook_content: bytes, dashboard_name: str) -> tuple:
         """
         Parse workbook content (.twbx or .twb) and return the (design_w, design_h)

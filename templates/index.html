@@ -1341,36 +1341,71 @@ function escHtmlZ(s) {
 
                 if (viewId) {
                     const workbookId = document.querySelector(`.workbook-select[data-workbook-index="${index}"]`).value;
+                    const dashName = this.options[this.selectedIndex] ? this.options[this.selectedIndex].text : '';
                     filterWrapper.style.display = 'block';
                     filterContainer.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-2"></span>Loading filters...</div>';
 
-                    fetch(`/api/filters/${viewId}?workbook_id=${workbookId}`)
+                    const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+                    // Render one control per filter: a dropdown of real values when
+                    // we discovered them (exact casing, no typing), else a text input.
+                    const renderFilterControls = (list) => {
+                        filterContainer.innerHTML = '';
+                        list.forEach(f => {
+                            const fieldName = f.name;
+                            const typeLabel = f.type === 'parameter' ? 'Parameter' : 'Filter';
+                            let control;
+                            if (f.values && f.values.length > 0) {
+                                const opts = f.values.map(v =>
+                                    `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+                                control = `<select class="form-select form-select-sm filter-input"
+                                                   data-filter-name="${escapeHtml(fieldName)}">
+                                               <option value="">All (no filter)</option>${opts}</select>`;
+                            } else {
+                                control = `<input type="text" class="form-control form-control-sm filter-input"
+                                                  data-filter-name="${escapeHtml(fieldName)}"
+                                                  placeholder="Value (leave empty for All)">`;
+                            }
+                            const div = document.createElement('div');
+                            div.className = 'mb-2 last-child-mb-0';
+                            div.innerHTML = `
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <label class="small text-muted mb-0">${escapeHtml(fieldName)}</label>
+                                    <span class="badge bg-light text-muted xx-small border">${typeLabel}</span>
+                                </div>${control}`;
+                            filterContainer.appendChild(div);
+                        });
+                    };
+
+                    const showNoFilters = () => {
+                        filterContainer.innerHTML = `
+                            <div class="text-center py-2">
+                                <div class="text-muted small italic mb-1">No automatic filters detected.</div>
+                                <div class="xx-small text-muted opacity-75">Some dashboards require manual filter entry. Use the button below to add custom filters.</div>
+                            </div>
+                        `;
+                    };
+
+                    // Value-aware discovery first (.twb fields + extract values);
+                    // legacy filters/parameters endpoint as fallback.
+                    fetch(`/api/filter-options/${workbookId}?dashboard=${encodeURIComponent(dashName)}`)
                         .then(response => response.json())
                         .then(data => {
                             if (data.filters && data.filters.length > 0) {
-                                filterContainer.innerHTML = '';
-                                data.filters.forEach(f => {
-                                    const fieldName = f.name;
-                                    const typeLabel = f.type === 'parameter' ? 'Parameter' : 'Filter';
-                                    const div = document.createElement('div');
-                                    div.className = 'mb-2 last-child-mb-0';
-                                    div.innerHTML = `
-                                        <div class="d-flex justify-content-between align-items-center mb-1">
-                                            <label class="small text-muted mb-0">${fieldName}</label>
-                                            <span class="badge bg-light text-muted xx-small border">${typeLabel}</span>
-                                        </div>
-                                        <input type="text" class="form-control form-control-sm filter-input" 
-                                               data-filter-name="${fieldName}" placeholder="Value (leave empty for All)">
-                                    `;
-                                    filterContainer.appendChild(div);
-                                });
+                                renderFilterControls(data.filters);
+                                feather.replace();
+                                return null;
+                            }
+                            return fetch(`/api/filters/${viewId}?workbook_id=${workbookId}`)
+                                .then(response => response.json());
+                        })
+                        .then(data => {
+                            if (data === null) return;  // already rendered
+                            if (data && data.filters && data.filters.length > 0) {
+                                renderFilterControls(data.filters);
                             } else {
-                                filterContainer.innerHTML = `
-                                    <div class="text-center py-2">
-                                        <div class="text-muted small italic mb-1">No automatic filters detected.</div>
-                                        <div class="xx-small text-muted opacity-75">Some dashboards require manual filter entry. Use the button below to add custom filters.</div>
-                                    </div>
-                                `;
+                                showNoFilters();
                             }
                             feather.replace();
                         })

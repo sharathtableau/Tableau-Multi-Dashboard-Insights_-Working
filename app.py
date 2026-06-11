@@ -472,6 +472,54 @@ def get_filters(view_id):
         logging.error(f"Error getting filters: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# ── Value-aware filter discovery (fields from .twb, values from extract) ─────
+_filter_options_cache: dict = {}
+_FILTER_OPTIONS_TTL = 600  # seconds
+
+@app.route('/api/filter-options/<workbook_id>')
+def get_filter_options_api(workbook_id):
+    """Discover a dashboard's real filters and their possible values so the UI
+    can render dropdowns (exact casing) instead of free-text vf_ inputs."""
+    if 'tableau_token' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    dashboard = (request.args.get('dashboard') or '').strip()
+    cache_key = (workbook_id, dashboard.lower())
+    cached = _filter_options_cache.get(cache_key)
+    if cached and (_time.time() - cached['ts']) < _FILTER_OPTIONS_TTL:
+        return jsonify({'filters': cached['data'], 'cached': True})
+
+    try:
+        from tableau_api import TableauHyperExtractor
+        token = session['tableau_token']
+        upload_dir = app.config.get('UPLOAD_FOLDER', 'uploads')
+
+        # Reuse the prefetched workbook file when available (saves the download)
+        wb_content = None
+        pf_key = (token[:12], workbook_id)
+        with _prefetch_wb_lock:
+            pf = _prefetch_wb_cache.get(pf_key)
+            wb_path = pf.get('wb_path') if (pf and pf.get('ready')) else None
+        if wb_path and os.path.exists(wb_path):
+            with open(wb_path, 'rb') as f:
+                wb_content = f.read()
+
+        extractor = TableauHyperExtractor(
+            server_url=session['tableau_server'],
+            site_id=session['tableau_site_id'],
+            token=token,
+            output_dir=upload_dir
+        )
+        if wb_content is None:
+            wb_content = extractor.download_workbook(workbook_id)
+
+        options = extractor.get_dashboard_filter_options(wb_content, dashboard)
+        _filter_options_cache[cache_key] = {'ts': _time.time(), 'data': options}
+        return jsonify({'filters': options})
+    except Exception as e:
+        logging.error(f"filter-options failed for workbook {workbook_id}: {e}")
+        return jsonify({'filters': [], 'error': str(e)})
+
 @app.route('/api/set_selection', methods=['POST'])
 def set_selection():
     try:
