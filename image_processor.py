@@ -358,7 +358,8 @@ class ImageProcessor:
             if not os.path.exists(image_path):
                 continue
             sd = summary_data[idx] if summary_data and idx < len(summary_data) else {}
-            dashboard_name = sd.get("dashboard", f"Dashboard {idx + 1}")
+            # 'or' (not dict default): an empty-string name must also fall back
+            dashboard_name = sd.get("dashboard") or f"Dashboard {idx + 1}"
             try:
                 insights = self._generate_ai_insights(
                     image_path, dashboard_name, csv_data=sd.get("csv_data", ""))

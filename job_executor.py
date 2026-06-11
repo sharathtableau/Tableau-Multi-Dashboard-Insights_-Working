@@ -52,17 +52,32 @@ def execute_preset_workflow(preset_data, server_url=None, site_id=None, token_na
             print(f"[JOB] Processing workbook {i+1}: {wb_config['workbook']} / {wb_config['dashboard']}", flush=True)
             logging.info(f"Processing {wb_config['workbook']} / {wb_config['dashboard']}")
 
-            # Find workbook by name
+            # Find workbook — by saved LUID first (immune to renames/name drift),
+            # then by case-insensitive name.
             workbooks = tableau.list_workbooks_in_project(wb_config['project'])
-            target_workbook = next((w for w in workbooks if w['name'] == wb_config['workbook']), None)
+            target_workbook = None
+            if wb_config.get('workbook_id'):
+                target_workbook = next(
+                    (w for w in workbooks if w.get('id') == wb_config['workbook_id']), None)
+            if not target_workbook:
+                wanted = (wb_config.get('workbook') or '').strip().lower()
+                target_workbook = next(
+                    (w for w in workbooks if w['name'].strip().lower() == wanted), None)
 
             if not target_workbook:
                 logging.warning(f"Workbook not found: {wb_config['workbook']}")
                 continue
 
-            # Find dashboard by name
+            # Find dashboard — same ID-first strategy
             dashboards = tableau.get_views_in_workbook(target_workbook['id'])
-            target_dashboard = next((d for d in dashboards if d['name'] == wb_config['dashboard']), None)
+            target_dashboard = None
+            if wb_config.get('dashboard_id'):
+                target_dashboard = next(
+                    (d for d in dashboards if d.get('id') == wb_config['dashboard_id']), None)
+            if not target_dashboard:
+                wanted = (wb_config.get('dashboard') or '').strip().lower()
+                target_dashboard = next(
+                    (d for d in dashboards if d['name'].strip().lower() == wanted), None)
 
             if not target_dashboard:
                 logging.warning(f"Dashboard not found: {wb_config['dashboard']}")

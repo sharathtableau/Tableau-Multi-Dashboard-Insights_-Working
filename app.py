@@ -525,21 +525,24 @@ def set_selection():
     try:
         data = request.get_json()
         index = data.get('index')
-        project = data.get('project')
-        workbook = data.get('workbook')
-        dashboard = data.get('dashboard')
-        
+
         if 'workbooks' not in session:
             session['workbooks'] = []
-            
+
         while len(session['workbooks']) <= index:
             session['workbooks'].append({})
-            
-        session['workbooks'][index].update({
-            'project': project,
-            'workbook': workbook,
-            'dashboard': dashboard
-        })
+
+        # Only store non-empty values, and keep display names and LUIDs in
+        # SEPARATE keys. The name fields ('project'/'workbook'/'dashboard') feed
+        # report section titles and preset name-matching — overwriting them with
+        # IDs or empty strings silently corrupts presets and reports.
+        updates = {}
+        for key in ('project', 'workbook', 'dashboard',
+                    'project_id', 'workbook_id', 'dashboard_id'):
+            val = (data.get(key) or '').strip()
+            if val:
+                updates[key] = val
+        session['workbooks'][index].update(updates)
         session.modified = True
         return jsonify({'success': True})
     except Exception as e:
@@ -1479,9 +1482,9 @@ def combine_images():
         for i, wb in enumerate(ready):
             summary_data.append({
                 'section': i + 1,
-                'project': wb.get('project', 'Unknown'),
-                'workbook': wb.get('workbook', 'Unknown'),
-                'dashboard': wb.get('dashboard', 'Unknown'),
+                'project': wb.get('project') or 'Unknown',
+                'workbook': wb.get('workbook') or 'Unknown',
+                'dashboard': wb.get('dashboard') or f'Dashboard {i + 1}',
                 'timestamp': wb.get('timestamp', 'Unknown'),
                 'image_path': wb.get('cropped_path', ''),
                 'applied_filters': wb.get('applied_filters', {}),
@@ -1612,6 +1615,8 @@ def save_preset():
                 'project': wb['project'],
                 'workbook': wb['workbook'],
                 'dashboard': wb['dashboard'],
+                'workbook_id': wb.get('workbook_id', ''),
+                'dashboard_id': wb.get('dashboard_view_id') or wb.get('dashboard_id', ''),
                 'crop_data': wb.get('crop_data'),
                 'filters': wb.get('applied_filters', {})
             }

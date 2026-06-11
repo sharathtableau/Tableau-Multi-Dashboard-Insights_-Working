@@ -1467,16 +1467,21 @@ function escHtmlZ(s) {
                             console.error('Error fetching view count:', err);
                         });
 
-                    // Save selection to session
-                    const projectId = document.querySelector(`.project-select[data-workbook-index="${index}"]`).value;
+                    // Save selection to session — display NAMES in the name fields
+                    // (reports and preset matching depend on them), LUIDs separately.
+                    const projSelectEl = document.querySelector(`.project-select[data-workbook-index="${index}"]`);
+                    const wbSelectEl = document.querySelector(`.workbook-select[data-workbook-index="${index}"]`);
                     fetch('/api/set_selection', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             index: parseInt(index),
-                            project: projectId,
-                            workbook: workbookId,
-                            dashboard: viewId
+                            project: projSelectEl.options[projSelectEl.selectedIndex] ? projSelectEl.options[projSelectEl.selectedIndex].text : '',
+                            workbook: wbSelectEl.options[wbSelectEl.selectedIndex] ? wbSelectEl.options[wbSelectEl.selectedIndex].text : '',
+                            dashboard: dashName,
+                            project_id: projSelectEl.value,
+                            workbook_id: workbookId,
+                            dashboard_id: viewId
                         })
                     }).catch(error => console.error('Error saving selection:', error));
 
