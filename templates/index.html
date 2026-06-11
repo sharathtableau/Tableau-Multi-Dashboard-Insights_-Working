@@ -926,6 +926,18 @@ function escHtmlZ(s) {
                                 </div>
                             </div>
 
+                            <div class="mb-4">
+                                <label class="form-label small text-muted fw-bold opacity-75">REPORT
+                                    FORMAT</label>
+                                <select name="format" id="export-format"
+                                    class="form-select bg-light rounded-3 border-0 text-dark"
+                                    style="box-shadow: none;">
+                                    <option value="pptx" selected>PowerPoint — Executive Report (.pptx)</option>
+                                    <option value="pdf">PDF Document (.pdf)</option>
+                                    <option value="docx">Word Document (.docx)</option>
+                                </select>
+                            </div>
+
                             <div class="d-grid gap-3" id="combine-section"
                                 style="display: {{ 'block' if session.workbooks and session.workbooks|selectattr('cropped', 'equalto', true)|list|length == session.workbook_count else 'none' }};">
                                 <button type="submit" class="btn btn-primary btn-lg btn-modern-shiny w-100"
@@ -2112,7 +2124,8 @@ function escHtmlZ(s) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     name: name,
-                    description: description
+                    description: description,
+                    format: (document.getElementById('export-format') || {}).value || 'pptx'
                 })
             })
                 .then(response => response.json())
@@ -2124,7 +2137,11 @@ function escHtmlZ(s) {
                             .then(d => console.log(`[Selenium] Closed ${d.closed} session(s) after Save Preset`))
                             .catch(err => console.warn('[Selenium] close-sessions error:', err));
 
-                        alert('Preset saved successfully!');
+                        if (data.warning) {
+                            alert('⚠️ ' + data.warning);
+                        } else {
+                            alert('Preset saved successfully!');
+                        }
                         const modal = bootstrap.Modal.getInstance(document.getElementById('presetModal'));
                         if (modal) modal.hide();
                     } else {
@@ -2147,6 +2164,8 @@ function escHtmlZ(s) {
             const btn = document.getElementById('combineButton');
             const originalHtml = btn.innerHTML;
             const filename = combineForm.querySelector('input[name="filename"]').value;
+            const format = (document.getElementById('export-format') || {}).value || 'pptx';
+            const ext = '.' + format;
 
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Generating...';
@@ -2156,7 +2175,7 @@ function escHtmlZ(s) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     filename: filename,
-                    format: 'pdf' // Defaulting to PDF as per the current form's intent
+                    format: format
                 })
             })
                 .then(async response => {
@@ -2165,7 +2184,7 @@ function escHtmlZ(s) {
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = filename.endsWith('.pdf') ? filename : filename + '.pdf';
+                        a.download = filename.toLowerCase().endsWith(ext) ? filename : filename.replace(/\.(pdf|pptx|docx)$/i, '') + ext;
                         document.body.appendChild(a);
                         a.click();
                         a.remove();

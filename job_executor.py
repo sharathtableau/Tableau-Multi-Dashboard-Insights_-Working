@@ -1,6 +1,7 @@
 import os
 import logging
 import smtplib
+import tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -38,10 +39,9 @@ def execute_preset_workflow(preset_data, server_url=None, site_id=None, token_na
         
         processor = ImageProcessor()
         
-        # Create unique temp directory for this run
+        # Use system temp dir so path stays short on Windows (avoids WinError 206)
         job_id = preset_data.get('id', 'manual')
-        temp_dir = os.path.join('uploads', f"job_{job_id}_{datetime.now().timestamp()}")
-        os.makedirs(temp_dir, exist_ok=True)
+        temp_dir = tempfile.mkdtemp(prefix=f"snap_{job_id[:8]}_")
         
         cropped_paths = []
         summary_data = []
@@ -151,11 +151,17 @@ def execute_preset_workflow(preset_data, server_url=None, site_id=None, token_na
         if not cropped_paths:
             raise Exception("No dashboards could be processed")
 
-        print(f"[JOB] All {len(cropped_paths)} dashboards processed. Now generating PPTX with AI insights...", flush=True)
-        # 4. Combine to Report (Defaulting to PPTX for now as requested in Phase 3 context)
+        # 4. Combine to Report — honour the format saved on the preset (default PPTX)
+        output_format = (preset_data.get('output_format') or 'pptx').lower()
+        print(f"[JOB] All {len(cropped_paths)} dashboards processed. Now generating {output_format.upper()} with AI insights...", flush=True)
         base_filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        output_path = processor.combine_to_pptx_with_details(cropped_paths, temp_dir, base_filename, summary_data)
-        print(f"[JOB] PPTX generated: {output_path}")
+        if output_format == 'pdf':
+            output_path = processor.combine_to_pdf_with_details(cropped_paths, temp_dir, base_filename, summary_data)
+        elif output_format == 'docx':
+            output_path = processor.combine_to_word_with_details(cropped_paths, temp_dir, base_filename, summary_data)
+        else:
+            output_path = processor.combine_to_pptx_with_details(cropped_paths, temp_dir, base_filename, summary_data)
+        print(f"[JOB] Report generated: {output_path}")
         
         # Move final file to output folder
         final_filename = os.path.basename(output_path)

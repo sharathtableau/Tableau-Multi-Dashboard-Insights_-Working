@@ -68,6 +68,20 @@ _PREFETCH_IMG_TTL   = 300   # seconds — pre-fetched images expire after 5 min
 
 app.secret_key = os.environ.get("SESSION_SECRET", "fallback-secret-key-for-dev")
 
+# ── Server-side sessions ──────────────────────────────────────────────────────
+# The app stores large data (CSV text, crop data, workbook paths) in the session.
+# Flask's default client-side cookie session has a hard ~4KB browser limit, so the
+# cookie silently overflowed and recent writes (e.g. a dashboard's crop_data) were
+# dropped — which is why crops intermittently vanished from saved presets.
+# Filesystem-backed sessions keep all data on the server; the cookie holds only an id.
+from flask_session import Session
+app.config['SESSION_TYPE']         = 'filesystem'
+app.config['SESSION_FILE_DIR']     = os.path.join('data', 'flask_sessions')
+app.config['SESSION_PERMANENT']    = False
+app.config['SESSION_USE_SIGNER']   = True
+os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+Session(app)
+
 # Configure upload and output folders
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
@@ -1222,7 +1236,17 @@ def crop_dashboard():
             
             wb_path = workbook.get('wb_path')
             dashboard_name = workbook.get('dashboard_name') or workbook.get('dashboard')
-            
+
+            if not wb_path:
+                logging.warning(f"[zone-map] wb_path not in session for workbook {workbook_index} — workbook XML was never downloaded")
+                mapping_error = "Workbook XML not downloaded — re-export this dashboard to enable zone mapping"
+            elif not os.path.exists(wb_path):
+                logging.warning(f"[zone-map] wb_path file missing: {wb_path}")
+                mapping_error = f"Workbook XML file missing ({os.path.basename(wb_path)}) — re-export to refresh"
+            elif not dashboard_name:
+                logging.warning(f"[zone-map] dashboard_name not set for workbook {workbook_index}")
+                mapping_error = "Dashboard name not set in session"
+
             if wb_path and os.path.exists(wb_path) and dashboard_name:
                 with open(wb_path, "rb") as f:
                     wb_content = f.read()
@@ -1248,10 +1272,18 @@ def crop_dashboard():
                     wb_content, dashboard_name, crop_data=crop_data_with_path, image_size=(orig_w, orig_h),
                     applied_filters=saved_filters
                 )
-                
-                # Note: extract_and_parse currently returns only [best_sheet]. 
-                # Let's verify and support multiple if the logic allows.
-                
+
+                # Fallback: if zone mapping found nothing (e.g. single-view workbook or
+                # crop didn't overlap any zone), re-run without crop_data to get all sheets.
+                if not matched_sheets:
+                    logging.info("Zone mapping returned no matches — falling back to all sheets in dashboard")
+                    try:
+                        _, matched_sheets, _ = extractor.extract_and_parse(
+                            wb_content, dashboard_name, applied_filters=saved_filters
+                        )
+                    except Exception as _fb_err:
+                        logging.warning(f"Fallback extract_and_parse failed: {_fb_err}")
+
                 if matched_sheets:
                     logging.info(f"✓ Geometry Mapping matched crop to sheets: {matched_sheets}")
                     
@@ -1361,21 +1393,25 @@ def combine_images():
     
     if 'workbooks' not in session:
         return jsonify({'error': 'No workbooks selected'}), 400
-    
-    # Check if all images are cropped
-    for workbook in session['workbooks']:
-        if not workbook.get('cropped', False):
-            return jsonify({'error': 'Please crop all images before combining'}), 400
+
+    # Export every dashboard that has a saved crop on disk. Stale placeholder
+    # slots (left behind by changed selections) must not block the export.
+    ready = [wb for wb in session['workbooks']
+             if wb.get('cropped') and wb.get('cropped_path')
+             and os.path.exists(wb.get('cropped_path', ''))]
+    if not ready:
+        return jsonify({'error': 'No cropped dashboards available — export and crop '
+                                 'at least one dashboard first (crops are cleared after a reset).'}), 400
     
     try:
         # Get data from JSON request
         data = request.get_json()
-        output_format = data.get('format', 'pdf')
+        output_format = data.get('format', 'pptx')
         custom_filename = data.get('filename', 'dashboard_report')
         
         # Remove extension from filename if provided
         base_filename = custom_filename
-        if custom_filename.endswith('.pdf') or custom_filename.endswith('.docx'):
+        if custom_filename.lower().endswith(('.pdf', '.docx', '.pptx')):
             base_filename = os.path.splitext(custom_filename)[0]
         
         # Use default filename if empty
@@ -1383,24 +1419,20 @@ def combine_images():
             base_filename = 'tableau_report'
         
         processor = ImageProcessor()
-        
-        # Get cropped image paths
-        cropped_paths = [wb['cropped_path'] for wb in session['workbooks'] if wb.get('cropped_path')]
-        
-        if not cropped_paths:
-            return jsonify({'error': 'No cropped images found'}), 400
-        
+
         # Create temporary output directory
         temp_dir = os.path.join(app.config['OUTPUT_FOLDER'], 'temp')
         os.makedirs(temp_dir, exist_ok=True)
-        
-        # Generate summary data for Word document
+
+        # Build image paths and metadata together from the SAME filtered list
+        # so report sections always pair with the right dashboard.
+        cropped_paths = [wb['cropped_path'] for wb in ready]
         summary_data = []
-        for i, wb in enumerate(session['workbooks']):
+        for i, wb in enumerate(ready):
             summary_data.append({
                 'section': i + 1,
                 'project': wb.get('project', 'Unknown'),
-                'workbook': wb.get('workbook', 'Unknown'), 
+                'workbook': wb.get('workbook', 'Unknown'),
                 'dashboard': wb.get('dashboard', 'Unknown'),
                 'timestamp': wb.get('timestamp', 'Unknown'),
                 'image_path': wb.get('cropped_path', ''),
@@ -1417,24 +1449,21 @@ def combine_images():
         else:
             output_path = processor.combine_to_word_with_details(cropped_paths, temp_dir, base_filename, summary_data)
         
-        # Return file for download
+        # Return file for download. Only the generated report file is cleaned up —
+        # the session's cropped/PNG images must survive so the user can export
+        # again (e.g. a second format) or save a preset. /reset removes them.
         def cleanup_after_download():
-            # Clean up temporary files after a delay
             import threading
             import time
             def delayed_cleanup():
-                time.sleep(30)  # Wait 30 seconds before cleanup
+                time.sleep(120)
                 try:
-                    for wb in session['workbooks']:
-                        for path_key in ['pdf_path', 'png_path', 'cropped_path']:
-                            if path_key in wb and os.path.exists(wb[path_key]):
-                                os.remove(wb[path_key])
                     if os.path.exists(output_path):
                         os.remove(output_path)
                 except:
                     pass
             threading.Thread(target=delayed_cleanup).start()
-        
+
         cleanup_after_download()
         
         return send_file(output_path, as_attachment=True, download_name=custom_filename)
@@ -1518,6 +1547,7 @@ def save_preset():
         'created_at': datetime.now().isoformat(),
         'server_url': session.get('tableau_server'),
         'site_id': session.get('tableau_site'),
+        'output_format': data.get('format', 'pptx'),
         'workbooks': []
     }
     
@@ -1525,8 +1555,11 @@ def save_preset():
     presets_dir = os.path.join(app.static_folder, 'presets')
     os.makedirs(presets_dir, exist_ok=True)
     
+    uncropped = []  # dashboards saved without a crop — will use the full image
+    slide_no = 0
     for i, wb in enumerate(session['workbooks']):
         if wb.get('project') and wb.get('workbook') and wb.get('dashboard'):
+            slide_no += 1
             workbook_entry = {
                 'project': wb['project'],
                 'workbook': wb['workbook'],
@@ -1534,7 +1567,11 @@ def save_preset():
                 'crop_data': wb.get('crop_data'),
                 'filters': wb.get('applied_filters', {})
             }
-            
+
+            # Flag any dashboard that has no crop — these render the full dashboard
+            if not wb.get('crop_data'):
+                uncropped.append(f"#{slide_no} ({wb.get('dashboard') or 'Dashboard'})")
+
             # Save preview image if available
             if wb.get('cropped_path') and os.path.exists(wb['cropped_path']):
                 preview_filename = f"{preset_data['id']}_{i}.png"
@@ -1544,14 +1581,22 @@ def save_preset():
                     workbook_entry['preview_image'] = f"presets/{preview_filename}"
                 except Exception as e:
                     logging.error(f"Failed to save preset preview: {e}")
-            
+
             preset_data['workbooks'].append(workbook_entry)
-    
+
     presets = load_presets()
     presets.append(preset_data)
     save_presets(presets)
-    
-    return jsonify({'success': True, 'preset': preset_data})
+
+    resp = {'success': True, 'preset': preset_data}
+    if uncropped:
+        resp['warning'] = (
+            "Saved, but these dashboards have NO crop and will use the FULL dashboard image: "
+            + ", ".join(uncropped)
+            + ". Crop each dashboard (you should see a cropped thumbnail) and save again if you want the cropped area."
+        )
+        logging.warning(f"Preset '{preset_name}' saved with uncropped dashboards: {uncropped}")
+    return jsonify(resp)
 
 @app.route('/api/delete_preset/<preset_id>', methods=['DELETE'])
 def delete_preset(preset_id):
@@ -1579,13 +1624,6 @@ def run_job(preset_id):
         tableau.token = session['tableau_token']
         tableau.site_id_response = session['tableau_site_id']
         tableau.user_id = session['tableau_user_id']
-        
-        processor = ImageProcessor()
-        temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], f"job_{preset_id}_{datetime.now().timestamp()}")
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        cropped_paths = []
-        summary_data = []
         
         for i, wb_config in enumerate(preset['workbooks']):
             # Use the shared executor for consistent logic
