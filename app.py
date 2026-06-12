@@ -1407,7 +1407,18 @@ def crop_dashboard():
                         if len(_fb_csv) > MAX_FALLBACK_CHARS:
                             _fb_csv = (_fb_csv[:MAX_FALLBACK_CHARS]
                                        + "\n... (truncated: full dashboard data exceeds context budget)")
-                        new_csv_data = _fb_csv
+                        # Steer the AI: this data is broader than the cropped view.
+                        # It must locate the sheet section(s) matching the image and
+                        # ignore the rest — otherwise insights could cite numbers
+                        # from sheets that are not in the crop.
+                        new_csv_data = (
+                            "[CONTEXT NOTE] The data below covers ALL worksheets of this dashboard, "
+                            "because the exact sheet behind the cropped image could not be determined. "
+                            "The attached image shows ONLY the cropped view. FIRST identify which "
+                            "'=== Sheet: ... ===' section(s) below contain the values visible in the "
+                            "image, THEN base every insight, status and recommendation on THOSE "
+                            "sections only. Do NOT cite numbers from unrelated sheets.\n\n"
+                            + _fb_csv)
                         session['workbooks'][workbook_index]['csv_data'] = new_csv_data
                         used_full_csv_fallback = True
                         csv_row_count = sum(
