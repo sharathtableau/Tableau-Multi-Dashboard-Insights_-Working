@@ -1387,8 +1387,37 @@ def crop_dashboard():
             err_msg = f"Geometry mapping failed: {ge_err}\n{traceback.format_exc()}"
             logging.error(err_msg)
             mapping_error = str(ge_err)
-        
+
         # --- END Mapping Logic ---
+
+        # ── Demo-safety net: never leave a cropped dashboard without data ────
+        # If sheet-level mapping/filtering produced nothing (crop missed every
+        # zone, sheet names didn't match the captured CSV, mapping crashed...),
+        # fall back to the FULL captured dashboard crosstab so the AI insights
+        # stay data-grounded instead of degrading to image-only commentary.
+        used_full_csv_fallback = False
+        if not new_csv_data:
+            try:
+                _fb_path = workbook.get('csv_data_path')
+                if _fb_path and os.path.exists(_fb_path):
+                    with open(_fb_path, 'r', encoding='utf-8') as f:
+                        _fb_csv = f.read().strip()
+                    if _fb_csv:
+                        MAX_FALLBACK_CHARS = 60000  # keep AI context bounded
+                        if len(_fb_csv) > MAX_FALLBACK_CHARS:
+                            _fb_csv = (_fb_csv[:MAX_FALLBACK_CHARS]
+                                       + "\n... (truncated: full dashboard data exceeds context budget)")
+                        new_csv_data = _fb_csv
+                        session['workbooks'][workbook_index]['csv_data'] = new_csv_data
+                        used_full_csv_fallback = True
+                        csv_row_count = sum(
+                            1 for l in new_csv_data.splitlines()
+                            if l.strip() and not l.startswith('=== Sheet:') and not l.startswith('...'))
+                        logging.warning(
+                            "Sheet-level mapping yielded no data — using FULL dashboard CSV "
+                            f"({len(new_csv_data)} chars) so insights stay data-grounded.")
+            except Exception as fb_err:
+                logging.warning(f"Full-CSV fallback failed (non-fatal): {fb_err}")
 
         # Persist the matched sheet(s) in session so they survive page refresh
         if matched_sheets:
@@ -1411,6 +1440,7 @@ def crop_dashboard():
             'png_filename': os.path.basename(_png_path) if _png_path else '',
             'thumbnail_filename': os.path.basename(thumbnail_path),
             'csv_fetched': bool(new_csv_data),
+            'fallback_all_sheets': used_full_csv_fallback,
             'csv_rows': csv_row_count,
             'csv_preview': new_csv_data[:50000] if new_csv_data else "",
             'matched_sheet': ", ".join(matched_sheets) if matched_sheets else None,

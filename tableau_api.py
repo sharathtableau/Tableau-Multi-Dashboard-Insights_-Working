@@ -1759,6 +1759,10 @@ class TableauHyperExtractor:
         field = field.strip()
         if not field or field.lower() in ('measure names', 'measure values'):
             return None
+        # Tableau encoding tokens are never real field names — a parse that
+        # lands on one means the column reference had a shape we don't model.
+        if field.lower() in ('usr', 'none', 'attr', 'nk', 'ok', 'qk', 'yr', 'mn', 'qr', 'tdy'):
+            return None
         return field, kind
 
     def get_dashboard_filter_options(self, workbook_content: bytes, dashboard_name: str, max_values: int = 200) -> List[Dict]:
