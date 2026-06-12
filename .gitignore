@@ -24,7 +24,8 @@ selenium_downloads/
 tableau_exports/
 user_tableau_exports/
 dummy/
-data/
+data/*
+!data/presets.json
 *.log
 
 # Project specific
