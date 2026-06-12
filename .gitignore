@@ -25,3 +25,17 @@ tableau_exports/
 user_tableau_exports/
 dummy/
 data/
+*.log
+
+# Project specific
+reports/
+image_processor.py_header_fix.py
+check_models.py
+
+# AI insights pre-warm cache
+.insights_cache/
+
+# Server-side session store
+data/flask_sessions/
+config_local.py
+.env.from-github-backup
