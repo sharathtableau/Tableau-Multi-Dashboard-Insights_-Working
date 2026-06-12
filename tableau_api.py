@@ -1831,29 +1831,46 @@ class TableauHyperExtractor:
                     found.setdefault(field.lower(),
                                      {'name': display, 'kind': kind, 'values': []})
 
-            # Distinct values from the extract — exact casing for the dropdowns
+            # Distinct values from the extract — exact casing for the dropdowns.
+            # Use targeted SELECT DISTINCT queries (not a full-table pandas load):
+            # constant memory and fast even for large extracts / small instances.
             if found and has_hyper:
                 try:
-                    df = self._read_hyper(hyper_path)
-                    norm_cols = {norm(c): c for c in df.columns}
-                    for fkey, opt in found.items():
-                        key = norm(fkey)
-                        col = norm_cols.get(key) or next(
-                            (c for k, c in norm_cols.items()
-                             if key and (key in k or k in key)), None)
-                        if col is None:
-                            continue
-                        series = df[col].dropna()
-                        if opt['kind'] == 'year':
-                            try:
-                                years = {str(pd.to_datetime(str(v)).year)
-                                         for v in series.unique()}
-                                opt['values'] = sorted(years)
-                            except Exception:
-                                pass
-                        else:
-                            vals = sorted({str(v) for v in series.unique()})
-                            opt['values'] = vals[:max_values]
+                    with HyperProcess(telemetry=Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU) as hyper:
+                        with Connection(hyper.endpoint, hyper_path) as conn:
+                            # Map normalized column name → (table, real column name)
+                            col_map = {}
+                            for schema in conn.catalog.get_schema_names():
+                                for table in conn.catalog.get_table_names(schema=schema):
+                                    tdef = conn.catalog.get_table_definition(table)
+                                    for c in tdef.columns:
+                                        cname = c.name.unescaped
+                                        col_map.setdefault(norm(cname), (table, cname))
+                            for fkey, opt in found.items():
+                                key = norm(fkey)
+                                hit = col_map.get(key) or next(
+                                    (v for k, v in col_map.items()
+                                     if key and (key in k or k in key)), None)
+                                if not hit:
+                                    continue
+                                table, cname = hit
+                                qcol = '"' + cname.replace('"', '""') + '"'
+                                try:
+                                    if opt['kind'] == 'year':
+                                        rows = conn.execute_list_query(
+                                            f'SELECT DISTINCT EXTRACT(YEAR FROM {qcol}) '
+                                            f'FROM {table} WHERE {qcol} IS NOT NULL LIMIT 200')
+                                        opt['values'] = sorted(
+                                            {str(int(r[0])) for r in rows if r[0] is not None})
+                                    else:
+                                        rows = conn.execute_list_query(
+                                            f'SELECT DISTINCT {qcol} FROM {table} '
+                                            f'WHERE {qcol} IS NOT NULL LIMIT {int(max_values) + 1}')
+                                        opt['values'] = sorted(
+                                            {str(r[0]) for r in rows})[:max_values]
+                                except Exception as qe:
+                                    logging.debug(f"filter-options: distinct query failed for "
+                                                  f"'{cname}' (non-fatal): {qe}")
                 except Exception as e:
                     logging.warning(f"filter-options: Hyper value read failed (non-fatal): {e}")
 

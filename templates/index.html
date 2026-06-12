@@ -1426,9 +1426,14 @@ function escHtmlZ(s) {
                     };
 
                     // Value-aware discovery first (.twb fields + extract values);
-                    // legacy filters/parameters endpoint as fallback.
+                    // legacy filters/parameters endpoint as fallback. Any failure
+                    // degrades to the custom-filter UI — never a dead end.
                     fetch(`/api/filter-options/${workbookId}?dashboard=${encodeURIComponent(dashName)}`)
                         .then(response => response.json())
+                        .catch(err => {
+                            console.warn('filter-options unavailable, falling back:', err);
+                            return { filters: [] };
+                        })
                         .then(data => {
                             if (data.filters && data.filters.length > 0) {
                                 renderFilterControls(data.filters);
@@ -1449,7 +1454,7 @@ function escHtmlZ(s) {
                         })
                         .catch(err => {
                             console.error('Error fetching filters:', err);
-                            filterContainer.innerHTML = '<div class="text-danger small">Error loading filters.</div>';
+                            showNoFilters();  // custom-filter UI still works
                         });
 
                     // Fetch view details to show sheet count
