@@ -58,6 +58,42 @@ _prefetch_wb_cache: dict = {}
 _prefetch_wb_lock  = _threading.Lock()
 _PREFETCH_WB_TTL   = 600   # seconds — cache valid for 10 min
 
+# ── Authoritative workbook slot store (concurrency fix) ─────────────────────────
+# The Flask session loads a fresh SNAPSHOT of session['workbooks'] at the start of
+# every request and writes the whole array back at the end. Long-running endpoints
+# (export ~30s, crop ~15s) therefore clobber each other when they overlap — a crop
+# would silently vanish ("3 crops, only 2 saved"). Since gunicorn runs workers=1,
+# we keep ONE shared list per session in process memory and alias
+# session['workbooks'] to it inside each mutating endpoint, so concurrent requests
+# mutate the same object instead of racing snapshots.
+import uuid as _uuid
+_WB_STORE: dict = {}
+_WB_LOCK = _threading.RLock()
+
+def _wb_key():
+    k = session.get('_wbkey')
+    if not k:
+        k = _uuid.uuid4().hex
+        session['_wbkey'] = k
+    return k
+
+def shared_workbooks(seed=None):
+    """Return the process-wide authoritative workbooks list for this session and
+    alias session['workbooks'] to it. Pass seed=[...] to (re)initialise."""
+    with _WB_LOCK:
+        k = _wb_key()
+        if seed is not None:
+            _WB_STORE[k] = seed
+        elif k not in _WB_STORE:
+            _WB_STORE[k] = session.get('workbooks', []) or []
+        session['workbooks'] = _WB_STORE[k]
+        session.modified = True
+        return _WB_STORE[k]
+
+def clear_shared_workbooks():
+    with _WB_LOCK:
+        _WB_STORE.pop(session.get('_wbkey', ''), None)
+
 # ── Dashboard image prefetch cache ────────────────────────────────────────────
 # Key: (token_prefix, view_id) → {'pdf_path', 'png_path', 'ts', 'ready': bool}
 # PDF export + PNG conversion run in the background when the user selects a dashboard.
@@ -108,16 +144,14 @@ def index():
     
     if 'workbook_count' not in session:
         session['workbook_count'] = 2
-        session['workbooks'] = []
-        for i in range(2):
-            session['workbooks'].append({
-                'index': i,
-                'project': '',
-                'workbook': '',
-                'dashboard': '',
-                'cropped': False,
-                'timestamp': None
-            })
+        shared_workbooks(seed=[{
+            'index': i, 'project': '', 'workbook': '', 'dashboard': '',
+            'cropped': False, 'timestamp': None
+        } for i in range(2)])
+    else:
+        # Point session['workbooks'] at the shared list so the template renders
+        # the authoritative state (not a possibly-stale unpickled snapshot).
+        shared_workbooks()
 
     projects = []
     if 'tableau_token' in session:
@@ -197,20 +231,14 @@ def extension():
 def set_workbook_count():
     count = int(request.form.get('count', 2))
     session['workbook_count'] = count
-    session['workbooks'] = []
     session['cropped_images'] = {}
-    
-    # Initialize workbook data structure
-    for i in range(count):
-        session['workbooks'].append({
-            'index': i,
-            'project': '',
-            'workbook': '',
-            'dashboard': '',
-            'cropped': False,
-            'timestamp': None
-        })
-    
+
+    # Reset the authoritative shared list to the new slot count
+    shared_workbooks(seed=[{
+        'index': i, 'project': '', 'workbook': '', 'dashboard': '',
+        'cropped': False, 'timestamp': None
+    } for i in range(count)])
+
     return redirect(url_for('index'))
 
 @app.route('/get_projects')
@@ -526,11 +554,10 @@ def set_selection():
         data = request.get_json()
         index = data.get('index')
 
-        if 'workbooks' not in session:
-            session['workbooks'] = []
-
-        while len(session['workbooks']) <= index:
-            session['workbooks'].append({})
+        with _WB_LOCK:
+            wbs = shared_workbooks()
+            while len(wbs) <= index:
+                wbs.append({})
 
         # Only store non-empty values, and keep display names and LUIDs in
         # SEPARATE keys. The name fields ('project'/'workbook'/'dashboard') feed
@@ -1023,13 +1050,13 @@ def export_dashboard():
             except Exception as trim_err:
                 logging.warning(f"PNG trim step failed (non-fatal): {trim_err}")
         
-        # Update session data
-        if 'workbooks' not in session:
-            session['workbooks'] = []
-        
-        while len(session['workbooks']) <= workbook_index:
-            session['workbooks'].append({})
-        
+        # Update session data — alias the shared authoritative list so this
+        # endpoint's writes can't be clobbered by an overlapping request.
+        with _WB_LOCK:
+            wbs = shared_workbooks()
+            while len(wbs) <= workbook_index:
+                wbs.append({})
+
         # Get data source info + workbook XML for this workbook
         workbook_id     = data.get('workbook_id')
         content_url     = data.get('content_url', '')
@@ -1241,7 +1268,13 @@ def crop_dashboard():
         data = request.get_json()
         workbook_index = data['workbook_index']
         crop_data = data['crop_data']
-        
+
+        # Alias the shared authoritative list so this crop can't be clobbered
+        # by an overlapping export/crop request committing a stale snapshot.
+        with _WB_LOCK:
+            wbs = shared_workbooks()
+            while len(wbs) <= workbook_index:
+                wbs.append({})
         workbook = session['workbooks'][workbook_index]
 
         # Resolve the original PNG path — always crop from the ORIGINAL dashboard image,
@@ -1486,9 +1519,14 @@ def combine_images():
     if 'workbooks' not in session:
         return jsonify({'error': 'No workbooks selected'}), 400
 
+    # Read from the shared authoritative list (not a possibly-stale snapshot)
+    # so every just-saved crop is visible to the export.
+    with _WB_LOCK:
+        all_wbs = list(shared_workbooks())
+
     # Export every dashboard that has a saved crop on disk. Stale placeholder
     # slots (left behind by changed selections) must not block the export.
-    ready = [wb for wb in session['workbooks']
+    ready = [wb for wb in all_wbs
              if wb.get('cropped') and wb.get('cropped_path')
              and os.path.exists(wb.get('cropped_path', ''))]
     if not ready:
@@ -1589,13 +1627,16 @@ def reset():
                     except:
                         pass
     
+    # Drop the shared in-process slot store for this session
+    clear_shared_workbooks()
+
     # Clear session data except authentication
-    keys_to_keep = ['tableau_token', 'tableau_site_id', 'tableau_user_id', 
+    keys_to_keep = ['tableau_token', 'tableau_site_id', 'tableau_user_id',
                    'tableau_server', 'tableau_site', 'username']
     session_copy = {k: v for k, v in session.items() if k in keys_to_keep}
     session.clear()
     session.update(session_copy)
-    
+
     flash('Reset complete', 'info')
     return redirect(url_for('index'))
 
@@ -1611,8 +1652,14 @@ def load_presets():
         return []
 
 def save_presets(presets):
-    with open(PRESETS_FILE, 'w') as f:
+    # Ensure the parent dir exists (Render's ephemeral disk may not have it) and
+    # write atomically so a crash mid-write can't corrupt the file.
+    d = os.path.dirname(PRESETS_FILE) or '.'
+    os.makedirs(d, exist_ok=True)
+    tmp = PRESETS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(presets, f, indent=4)
+    os.replace(tmp, PRESETS_FILE)
 
 @app.route('/jobs')
 def jobs():
@@ -1647,9 +1694,13 @@ def save_preset():
     presets_dir = os.path.join(app.static_folder, 'presets')
     os.makedirs(presets_dir, exist_ok=True)
     
+    # Read from the shared authoritative list so all configured slots are captured
+    with _WB_LOCK:
+        all_wbs = list(shared_workbooks())
+
     uncropped = []  # dashboards saved without a crop — will use the full image
     slide_no = 0
-    for i, wb in enumerate(session['workbooks']):
+    for i, wb in enumerate(all_wbs):
         if wb.get('project') and wb.get('workbook') and wb.get('dashboard'):
             slide_no += 1
             workbook_entry = {
