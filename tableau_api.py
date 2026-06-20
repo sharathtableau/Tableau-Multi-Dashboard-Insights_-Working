@@ -323,11 +323,11 @@ class TableauAPI:
     def get_views_in_workbook(self, workbook_id: str) -> List[Dict]:
         """Get all views (dashboards) in a specific workbook"""
         url = f"{self.server_url}/api/{self.api_version}/sites/{self.site_id_response}/workbooks/{workbook_id}/views"
-        
+
         try:
-            response = requests.get(url, headers=self._get_headers())
+            response = requests.get(url, headers=self._get_headers(), timeout=(5, 15))
             response.raise_for_status()
-            
+
             data = response.json()
             views = data.get("views", {}).get("view", [])
             
@@ -783,15 +783,19 @@ class TableauAPI:
         
         try:
             logging.info(f"Discovering worksheets for workbook {workbook_id} via Metadata API...")
+            # Fail fast: on sites where the Metadata API is slow or unindexed it
+            # returns empty anyway, so a hung request would just stall the
+            # dashboard dropdown. (5s connect, 12s read) → fall back to REST.
             response = requests.post(
                 metadata_url,
                 headers=self._get_headers(),
                 json={
                     "query": query,
                     "variables": {"luid": workbook_id}
-                }
+                },
+                timeout=(5, 12)
             )
-            
+
             if response.status_code != 200:
                 logging.warning(f"Metadata API request failed: {response.status_code}")
                 return []

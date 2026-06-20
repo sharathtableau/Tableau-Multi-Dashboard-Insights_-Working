@@ -377,25 +377,37 @@ def test_crosstab_export(workbook_id):
         logging.error(f"Error testing crosstab export: {str(e)}", exc_info=True)
         return jsonify({'error': str(e), 'success': False}), 500
 
+_views_cache: dict = {}
+_views_cache_lock = _threading.Lock()
+_VIEWS_TTL = 180  # seconds — dashboards rarely change within a working session
+
 @app.route('/api/views/<workbook_id>')
 def get_views_by_id(workbook_id):
     if 'tableau_token' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
+    # Serve from cache: the workbook-select and dashboard-select handlers both
+    # call this, so a naive flow makes the same multi-call lookup twice.
+    cache_key = (session.get('tableau_token', '')[:12], workbook_id)
+    with _views_cache_lock:
+        hit = _views_cache.get(cache_key)
+        if hit and (_time.time() - hit['ts']) < _VIEWS_TTL:
+            return jsonify(hit['data'])
+
     try:
         tableau = TableauAPI(session['tableau_server'], session['tableau_site'])
         tableau.token = session['tableau_token']
         tableau.site_id_response = session['tableau_site_id']
         tableau.user_id = session['tableau_user_id']
-        
-        # Try GraphQL discovery first for more accurate counts (including hidden sheets)
-        views = tableau.get_workbook_worksheets_graphql(workbook_id)
-        if not views:
-            views = tableau.get_views_in_workbook(workbook_id)
-        
-        # Resolve all contentUrls for the workbook views via REST API to have a lookup map
+
+        # One REST call serves both the contentUrl map AND the fallback list.
+        # GraphQL adds hidden-sheet/parent context but is slow (and empty on some
+        # sites); only its result is conditional, REST is fetched exactly once.
         rest_views = tableau.get_views_in_workbook(workbook_id)
         content_url_map = {v.get('id'): v.get('contentUrl') for v in rest_views if v.get('id')}
+
+        graphql_views = tableau.get_workbook_worksheets_graphql(workbook_id)
+        views = graphql_views if graphql_views else rest_views
         
         # Count different types of views and ensure IDs are resolved
         view_details = []
@@ -452,6 +464,9 @@ def get_views_by_id(workbook_id):
         }
 
         logging.info(f"Workbook {workbook_id} has {len(views)} total views: {len(worksheets)} worksheets, {len(dashboards_list)} dashboards")
+
+        with _views_cache_lock:
+            _views_cache[cache_key] = {'ts': _time.time(), 'data': result}
 
         return jsonify(result)
     except Exception as e:
