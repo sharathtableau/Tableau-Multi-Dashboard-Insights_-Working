@@ -152,83 +152,51 @@ class TableauAPI:
                 logging.error(f"Response text: {e.response.text}")
             raise Exception(f"Failed to retrieve projects: {str(e)}")
     
+    # Cache the full site workbook list per auth token. The project.id REST
+    # filter is rejected (400) on current API versions, so we always end up
+    # listing every workbook and filtering client-side — paging the whole site
+    # on every project click is the main "slow dropdown" cost. Cache it.
+    _all_workbooks_cache: dict = {}
+    _ALL_WB_TTL = 300  # seconds
+
+    def _get_all_site_workbooks(self) -> List[Dict]:
+        key = (self.server_url, self.site_id_response, (self.token or '')[:12])
+        import time as _t
+        cached = TableauAPI._all_workbooks_cache.get(key)
+        if cached and (_t.time() - cached['ts']) < self._ALL_WB_TTL:
+            return cached['workbooks']
+
+        url = f"{self.server_url}/api/{self.api_version}/sites/{self.site_id_response}/workbooks"
+        all_wbs, page = [], 1
+        while True:
+            resp = requests.get(url, headers=self._get_headers(),
+                                params={"pageSize": "1000", "pageNumber": str(page)},
+                                timeout=(5, 20))
+            resp.raise_for_status()
+            container = (resp.json() or {}).get("workbooks", {}) or {}
+            batch = container.get("workbook", [])
+            if isinstance(batch, dict):
+                batch = [batch]
+            all_wbs.extend(batch)
+            # Stop when the page wasn't full (no more pages)
+            if len(batch) < 1000:
+                break
+            page += 1
+            if page > 20:  # hard safety cap
+                break
+        TableauAPI._all_workbooks_cache[key] = {'ts': _t.time(), 'workbooks': all_wbs}
+        logging.info(f"Fetched + cached {len(all_wbs)} site workbooks")
+        return all_wbs
+
     def list_workbooks_in_project_by_id(self, project_id: str) -> List[Dict]:
-        """Get all workbooks in a specific project using project ID and filtering"""
+        """Get all workbooks in a specific project (from the cached site list)."""
         try:
-            # Try with different filter keys as they vary by Tableau version
-            # Primary filter: project.id:eq:ID
-            url = f"{self.server_url}/api/{self.api_version}/sites/{self.site_id_response}/workbooks"
-            params = {
-                "filter": f"project.id:eq:{project_id}",
-                "pageSize": "1000"
-            }
-            
-            logging.info(f"Requesting workbooks for project ID '{project_id}' from: {url}")
-            response = requests.get(url, headers=self._get_headers(), params=params)
-            
-            logging.info(f"Workbooks API response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                logging.error(f"Workbooks API error: Status {response.status_code}")
-                logging.error(f"Response: {response.text}")
-                
-                # If 400 (Bad Request), it's likely the filter syntax. 
-                # Don't raise yet; if we return null workbooks, the fallback below will trigger.
-                if response.status_code == 400:
-                    logging.warning("API rejected filter (400). Will attempt manual fallback...")
-                    data = {"workbooks": {"workbook": []}} # Mock empty results to trigger fallback
-                else:
-                    response.raise_for_status()
-            else:
-                data = response.json()
-            if data is None:
-                logging.error("Workbooks API returned empty/None data")
-                return []
-                
-            logging.info(f"DEBUG: Raw workbooks data structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-            workbooks_container = data.get("workbooks", {})
-            if workbooks_container is None:
-                 logging.warning("'workbooks' key is present but None")
-                 workbooks_container = {}
-            
-            workbooks = workbooks_container.get("workbook", [])
-            
-            # Ensure workbooks is always a list
-            if isinstance(workbooks, dict):
-                workbooks = [workbooks]
-            
-            # If empty, maybe the filter project.id is not supported, try fetching all and filtering manually
-            if not workbooks:
-                logging.info(f"No workbooks found with project.id filter. Fetching all workbooks and filtering manually...")
-                all_url = f"{self.server_url}/api/{self.api_version}/sites/{self.site_id_response}/workbooks"
-                all_params = {"pageSize": "1000"}
-                all_response = requests.get(all_url, headers=self._get_headers(), params=all_params)
-                logging.info(f"All workbooks response status: {all_response.status_code}")
-                all_response.raise_for_status()
-                all_data = all_response.json()
-                
-                if all_data is None:
-                    logging.error("All workbooks API returned empty/None data")
-                    return []
-                    
-                all_workbooks = all_data.get("workbooks", {}).get("workbook", [])
-                
-                if isinstance(all_workbooks, dict):
-                    all_workbooks = [all_workbooks]
-                
-                logging.info(f"Fetched {len(all_workbooks)} total workbooks. Filtering for project ID: {project_id}")
-                workbooks = [wb for wb in all_workbooks if wb.get('project', {}).get('id') == project_id]
-                logging.info(f"Manually filtered {len(workbooks)} workbooks for project '{project_id}'")
-                
-                if not workbooks and all_workbooks:
-                    # Log first workbook project ID for comparison
-                    first_wb = all_workbooks[0]
-                    first_pid = first_wb.get('project', {}).get('id')
-                    logging.info(f"Sample workbook project ID: {first_pid}")
-            
-            logging.info(f"Total retrieved workbooks: {len(workbooks)}")
+            all_workbooks = self._get_all_site_workbooks()
+            workbooks = [wb for wb in all_workbooks
+                         if wb.get('project', {}).get('id') == project_id]
+            logging.info(f"{len(workbooks)} workbooks in project '{project_id}' "
+                         f"(of {len(all_workbooks)} site-wide)")
             return workbooks
-            
         except Exception as e:
             logging.error(f"Failed to get workbooks for project ID '{project_id}': {str(e)}")
             raise Exception(f"Failed to retrieve workbooks: {str(e)}")
