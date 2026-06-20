@@ -1526,9 +1526,25 @@ def combine_images():
 
     # Export every dashboard that has a saved crop on disk. Stale placeholder
     # slots (left behind by changed selections) must not block the export.
-    ready = [wb for wb in all_wbs
-             if wb.get('cropped') and wb.get('cropped_path')
-             and os.path.exists(wb.get('cropped_path', ''))]
+    # Diagnostic: log the disposition of every slot so a dropped crop is traceable.
+    ready = []
+    for i, wb in enumerate(all_wbs):
+        has_flag = bool(wb.get('cropped'))
+        cp = wb.get('cropped_path', '')
+        on_disk = bool(cp and os.path.exists(cp))
+        name = wb.get('dashboard') or '(unset)'
+        if has_flag and on_disk:
+            ready.append(wb)
+            logging.info(f"[combine] slot {i} '{name}': INCLUDED ({os.path.basename(cp)})")
+        elif has_flag and cp and not on_disk:
+            logging.warning(f"[combine] slot {i} '{name}': DROPPED — cropped flag set but "
+                            f"file missing on disk: {cp}")
+        elif has_flag and not cp:
+            logging.warning(f"[combine] slot {i} '{name}': DROPPED — cropped flag set but "
+                            f"no cropped_path recorded")
+        else:
+            logging.info(f"[combine] slot {i} '{name}': skipped (not cropped)")
+    logging.info(f"[combine] {len(ready)} of {len(all_wbs)} slots ready for export")
     if not ready:
         return jsonify({'error': 'No cropped dashboards available — export and crop '
                                  'at least one dashboard first (crops are cleared after a reset).'}), 400
