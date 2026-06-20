@@ -381,6 +381,8 @@ class ImageProcessor:
             dashboards.append({
                 "image_path": image_path,
                 "name": dashboard_name,
+                "workbook": sd.get("workbook") or "",
+                "project": sd.get("project") or "",
                 "filters": sd.get("applied_filters", {}),
                 "datasources": sd.get("datasources", []),
                 "headline": headline or dashboard_name,
@@ -523,9 +525,17 @@ class ImageProcessor:
 
             for i, d in enumerate(dashboards):
                 fill = (255, 255, 255) if i % 2 == 0 else ROWALT
-                texts = [d["name"], d["key_metric"] or "-", d["headline"], d["recommendation"] or "-"]
+                # Dashboard cell carries the workbook on a second line so two
+                # identically-named dashboards stay distinguishable.
+                _wb = (d.get("workbook") or "").strip()
+                dash_label = d["name"]
+                if _wb and _wb.lower() != d["name"].strip().lower():
+                    dash_label = f"{d['name']}\n{_wb}"
+                texts = [dash_label, d["key_metric"] or "-", d["headline"], d["recommendation"] or "-"]
                 n_lines = max(cell_lines(self._pdf_safe(t), w)
                               for t, w in zip(texts, widths[1:]))
+                # account for the explicit workbook line break in the dashboard cell
+                n_lines = max(n_lines, dash_label.count("\n") + 1)
                 row_h = n_lines * 0.135 + 0.09
                 badge_fill, badge_text, badge_label = status_style(d["status"])
                 if d["status"] == "RED":
@@ -540,7 +550,7 @@ class ImageProcessor:
                 table_cell(x, y, widths[0], row_h, badge_label, bold=True,
                            fill=badge_fill, text_c=badge_text, align="C")
                 x += widths[0]
-                table_cell(x, y, widths[1], row_h, d["name"], bold=True, fill=fill)
+                table_cell(x, y, widths[1], row_h, dash_label, bold=True, fill=fill)
                 x += widths[1]
                 table_cell(x, y, widths[2], row_h, d["key_metric"] or "-",
                            bold=True, fill=fill, text_c=metric_c)
@@ -560,7 +570,7 @@ class ImageProcessor:
                 needed = 0.31 + 0.30 + ZONE_H + 0.05 + act_h
                 if y + needed > BOTTOM:
                     y = new_page()
-                y = section_bar(y, f"{i + 2}) {d['name']} - Results", status=d["status"] or None)
+                y = section_bar(y, self._wbr_section_title(i + 2, d), status=d["status"] or None)
 
                 # Yellow HEADLINE strip
                 pdf.set_fill_color(*YELLOW)
@@ -837,6 +847,42 @@ class ImageProcessor:
         run.font.name = "Calibri"
         return box
 
+    def _wbr_source_cell(self, slide, x, y, w, h, dashboard, workbook, fill_rgb=None):
+        """Scorecard DASHBOARD cell: dashboard name (bold) over its workbook
+        (muted) so identically-named dashboards are still distinguishable."""
+        box = self._b360_add_box(slide, x, y, w, h,
+                                 fill_rgb if fill_rgb is not None else self._WBR_WHITE,
+                                 self._WBR_LINE, border_pt=0.75)
+        tf = box.text_frame
+        tf.word_wrap = True
+        tf.margin_left = tf.margin_right = Emu(int(0.06 * 914400))
+        tf.margin_top = tf.margin_bottom = Emu(int(0.02 * 914400))
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = dashboard
+        r.font.size = PPTPt(8.5)
+        r.font.bold = True
+        r.font.color.rgb = self._WBR_INK
+        r.font.name = "Calibri"
+        if workbook and workbook.strip() and workbook.strip().lower() != dashboard.strip().lower():
+            p2 = tf.add_paragraph()
+            r2 = p2.add_run()
+            r2.text = workbook
+            r2.font.size = PPTPt(7)
+            r2.font.color.rgb = self._WBR_MUTED
+            r2.font.name = "Calibri"
+        return box
+
+    @staticmethod
+    def _wbr_section_title(sec_no, d):
+        """Numbered section title that includes the workbook when it differs
+        from the dashboard name, e.g. '2) E-Commerce Sales — Dashboard'."""
+        name = d.get("name", "")
+        wb = (d.get("workbook") or "").strip()
+        if wb and wb.lower() != name.strip().lower():
+            return f"{sec_no}) {wb} — {name} — Results"
+        return f"{sec_no}) {name} — Results"
+
     def _wbr_status_style(self, status):
         """(fill, text_colour, label) for a RAG status badge."""
         if status == "RED":
@@ -902,8 +948,8 @@ class ImageProcessor:
                            size=9, bold=True, fill_rgb=badge_fill,
                            text_rgb=badge_text, align=PP_ALIGN.CENTER)
             x += widths[0]
-            self._wbr_cell(slide, x, cy, widths[1], 0.72, d["name"],
-                           size=8.5, bold=True, fill_rgb=fill)
+            self._wbr_source_cell(slide, x, cy, widths[1], 0.72,
+                                  d["name"], d.get("workbook", ""), fill_rgb=fill)
             x += widths[1]
             self._wbr_cell(slide, x, cy, widths[2], 0.72, d.get("key_metric") or "—",
                            size=8.5, bold=True, fill_rgb=fill,
@@ -922,7 +968,7 @@ class ImageProcessor:
         """One numbered dashboard section rendered AT y on the given page:
         section bar, yellow HEADLINE strip, image left + comments right,
         ACTION row. Fixed height _WBR_SEC_H so two sections stack per page."""
-        self._wbr_section_bar(slide, y, slide_w, f"{sec_no}) {d['name']} — Results")
+        self._wbr_section_bar(slide, y, slide_w, self._wbr_section_title(sec_no, d))
         # RAG status chip pinned to the right end of the section bar
         if d.get("status"):
             badge_fill, badge_text, badge_label = self._wbr_status_style(d["status"])
