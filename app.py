@@ -400,14 +400,19 @@ def get_views_by_id(workbook_id):
         tableau.site_id_response = session['tableau_site_id']
         tableau.user_id = session['tableau_user_id']
 
-        # One REST call serves both the contentUrl map AND the fallback list.
-        # GraphQL adds hidden-sheet/parent context but is slow (and empty on some
-        # sites); only its result is conditional, REST is fetched exactly once.
+        # REST is fast and reliably returns the dashboards. GraphQL only adds
+        # hidden-sheet/parent context and is slow-or-empty on many Cloud sites —
+        # blocking the dropdown on it is what made dashboards hang on "Loading…".
+        # So: use REST for the dropdown; only consult GraphQL when REST returns
+        # nothing (rare). The hidden-sheet enrichment is sacrificed for speed,
+        # which is the right trade for an interactive dropdown.
         rest_views = tableau.get_views_in_workbook(workbook_id)
         content_url_map = {v.get('id'): v.get('contentUrl') for v in rest_views if v.get('id')}
 
-        graphql_views = tableau.get_workbook_worksheets_graphql(workbook_id)
-        views = graphql_views if graphql_views else rest_views
+        if rest_views:
+            views = rest_views
+        else:
+            views = tableau.get_workbook_worksheets_graphql(workbook_id) or []
         
         # Count different types of views and ensure IDs are resolved
         view_details = []
